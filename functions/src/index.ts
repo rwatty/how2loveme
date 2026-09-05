@@ -1,9 +1,16 @@
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore';
 import { getMessaging } from 'firebase-admin/messaging';
+import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { defineSecret, defineString } from 'firebase-functions/params';
 import { HttpsError, onCall } from 'firebase-functions/https';
 import { Resend } from 'resend';
+import {
+  buildRelationshipMetricSnapshots,
+  type InsightMetricRecord,
+  type LoveActionMetricRecord,
+  type LoveNoteMetricRecord,
+} from './relationshipMetrics';
 
 if (!getApps().length) {
   initializeApp();
@@ -124,6 +131,7 @@ const LOVE_ACTION_CONFIRMATION_REACTIONS = ['yep', 'lovedIt', 'letsTryAgain'] as
 const LOVE_ACTION_APPRECIATION_REACTIONS = ['thankYou', 'madeMyDay', 'morePlease'] as const;
 const PUSH_DEVICE_PLATFORMS = ['ios', 'android'] as const;
 const LOVE_ACTION_SOURCES = ['library', 'custom'] as const;
+const LOVE_NOTE_TYPES = ['warm', 'playful', 'reassuring', 'grateful', 'desire'] as const;
 const NOTIFICATION_PRIVACY_PREFERENCES = ['detailed', 'discreet', 'off'] as const;
 
 type LoveArea = (typeof LOVE_AREAS)[number];
@@ -500,6 +508,97 @@ function getLoveActionReminderDelivery(existing: any, uid: string) {
   throw new HttpsError('failed-precondition', 'This Love Action cannot send a partner reminder in its current state.');
 }
 
+function toMillis(value: unknown) {
+  if (value instanceof Timestamp) {
+    return value.toMillis();
+  }
+
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+
+  if (value && typeof value === 'object' && 'toMillis' in value && typeof (value as { toMillis?: unknown }).toMillis === 'function') {
+    return ((value as { toMillis: () => number }).toMillis)();
+  }
+
+  return Date.now();
+}
+
+function mapMetricLoveAction(documentSnapshot: FirebaseFirestore.QueryDocumentSnapshot): LoveActionMetricRecord {
+  const data = documentSnapshot.data();
+
+  return {
+    id: documentSnapshot.id,
+    area: isOneOf(String(data.area ?? ''), LOVE_AREAS) ? data.area : 'emotional',
+    importance: isOneOf(String(data.importance ?? ''), LOVE_IMPORTANCE) ? data.importance : 'medium',
+    status: isOneOf(String(data.status ?? ''), LOVE_ACTION_STATUSES) ? data.status : 'proposed',
+    updatedAt: toMillis(data.updatedAt),
+    nextDueAt: data.nextDueAt ? toMillis(data.nextDueAt) : null,
+    lastCompletedAt: data.lastCompletedAt ? toMillis(data.lastCompletedAt) : null,
+    respondedAt: data.respondedAt ? toMillis(data.respondedAt) : null,
+  };
+}
+
+function mapMetricInsight(documentSnapshot: FirebaseFirestore.QueryDocumentSnapshot): InsightMetricRecord | null {
+  const data = documentSnapshot.data();
+
+  if (data.visibility !== 'shared') {
+    return null;
+  }
+
+  return {
+    id: documentSnapshot.id,
+    mood: Number.isFinite(Number(data.mood)) ? Number(data.mood) : 3,
+    connection: Number.isFinite(Number(data.connection)) ? Number(data.connection) : 3,
+    tension: Number.isFinite(Number(data.tension)) ? Number(data.tension) : 3,
+    appreciation: String(data.appreciation ?? ''),
+    need: String(data.need ?? ''),
+    reflection: String(data.reflection ?? ''),
+    nextStep: String(data.nextStep ?? ''),
+    visibility: 'shared',
+    createdAt: toMillis(data.createdAt),
+  };
+}
+
+function mapMetricLoveNote(documentSnapshot: FirebaseFirestore.QueryDocumentSnapshot): LoveNoteMetricRecord {
+  const data = documentSnapshot.data();
+  const noteType = String(data.noteType ?? 'warm');
+
+  return {
+    id: documentSnapshot.id,
+    noteType: isOneOf(noteType, LOVE_NOTE_TYPES) ? noteType : 'warm',
+    tags: Array.isArray(data.tags) ? data.tags.filter((value: unknown): value is string => typeof value === 'string') : [],
+    createdAt: toMillis(data.createdAt),
+  };
+}
+
+async function refreshRelationshipMetricSnapshots(coupleId: string) {
+  const firestore = getFirestore();
+  const [actionSnapshots, insightSnapshots, noteSnapshots] = await Promise.all([
+    firestore.collection('couples').doc(coupleId).collection('loveActions').orderBy('updatedAt', 'desc').limit(250).get(),
+    firestore.collection('couples').doc(coupleId).collection('insights').orderBy('createdAt', 'desc').limit(180).get(),
+    firestore.collection('couples').doc(coupleId).collection('mirrorMessages').orderBy('createdAt', 'desc').limit(180).get(),
+  ]);
+  const actions = actionSnapshots.docs.map(mapMetricLoveAction);
+  const insights = insightSnapshots.docs.map(mapMetricInsight).filter((entry): entry is InsightMetricRecord => !!entry);
+  const notes = noteSnapshots.docs.map(mapMetricLoveNote);
+  const snapshots = buildRelationshipMetricSnapshots({ actions, insights, notes });
+  const batch = firestore.batch();
+
+  snapshots.forEach(snapshot => {
+    batch.set(
+      firestore.collection('couples').doc(coupleId).collection('metricSnapshots').doc(snapshot.id),
+      {
+        ...snapshot.data,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+  });
+
+  await batch.commit();
+}
+
 export const sendPartnerInvite = onCall(
   {
     secrets: [RESEND_API_KEY],
@@ -736,6 +835,7 @@ export const acceptPartnerInvite = onCall(async request => {
         email,
         coupleId,
       }),
+      refreshRelationshipMetricSnapshots(coupleId),
     ]);
   }
 
@@ -1317,4 +1417,25 @@ export const sendLoveActionReminder = onCall(async request => {
 
   return { success: true, actionId, deliveredCount, targetUserId: delivery.targetUserId };
 });
+
+export const syncRelationshipMetricsFromLoveActions = onDocumentWritten(
+  'couples/{coupleId}/loveActions/{actionId}',
+  async event => {
+    await refreshRelationshipMetricSnapshots(event.params.coupleId);
+  },
+);
+
+export const syncRelationshipMetricsFromInsights = onDocumentWritten(
+  'couples/{coupleId}/insights/{insightId}',
+  async event => {
+    await refreshRelationshipMetricSnapshots(event.params.coupleId);
+  },
+);
+
+export const syncRelationshipMetricsFromLoveNotes = onDocumentWritten(
+  'couples/{coupleId}/mirrorMessages/{messageId}',
+  async event => {
+    await refreshRelationshipMetricSnapshots(event.params.coupleId);
+  },
+);
 

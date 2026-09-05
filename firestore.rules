@@ -293,6 +293,11 @@ service cloud.firestore {
         allow create, update, delete: if false;
       }
 
+      match /metricSnapshots/{snapshotId} {
+        allow read: if isCoupleMember(coupleId);
+        allow create, update, delete: if false;
+      }
+
       match /insights/{insightId} {
         allow read: if isCoupleMember(coupleId);
         allow create: if isCoupleMember(coupleId)

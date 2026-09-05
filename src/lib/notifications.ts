@@ -7,7 +7,6 @@ import {
   getToken,
   onMessage,
   onTokenRefresh,
-  registerDeviceForRemoteMessages,
   type RemoteMessage,
 } from '@react-native-firebase/messaging';
 import notifee, {
@@ -89,7 +88,6 @@ export async function enableNotifications(user: User) {
     throw new Error('Notification permission was not granted on this device.');
   }
 
-  await registerDeviceForRemoteMessages(firebaseMessaging);
   const token = await getToken(firebaseMessaging);
   const installationId = await getOrCreateInstallationId();
   await registerDevicePushToken(user, {
@@ -148,7 +146,6 @@ export async function refreshPushRegistration(user: User) {
     return null;
   }
 
-  await registerDeviceForRemoteMessages(firebaseMessaging);
   const token = await getToken(firebaseMessaging);
   const installationId = await getOrCreateInstallationId();
   await registerDevicePushToken(user, {

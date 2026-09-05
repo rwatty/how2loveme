@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth } from '@react-native-firebase/auth';
 import {
@@ -19,10 +19,14 @@ import {
 import {
   buildAreaBalance,
   buildHistoryFeed,
+  buildMetricChartPoints,
   buildPulseSummary,
   buildScoreBreakdown,
   getMetricsWindowStart,
+  type CoachingRecommendation,
   type MetricsWindow,
+  type PulseLabel,
+  type PulseTrend,
 } from '../lib/relationshipMetrics';
 import {
   deleteInsightEntry,
@@ -31,7 +35,8 @@ import {
   updateInsightEntry,
 } from '../lib/relationshipSync';
 import { LOVE_AREA_LABELS } from '../lib/loveLibrary';
-import { MainTabParamList } from '../navigation/MainNavigator';
+import { LOVE_NOTE_PROMPTS, LOVE_NOTE_TYPE_LABELS } from '../lib/loveNotes';
+import type { MainTabParamList } from '../navigation/MainNavigator';
 import {
   useInsightsStore,
   type InsightEntry,
@@ -80,7 +85,7 @@ function getInsightPreview(entry: InsightEntry) {
   return entry.reflection || entry.appreciation || entry.need || entry.nextStep || 'Saved insight';
 }
 
-function getPulseLabelCopy(label: 'strained' | 'fragile' | 'steady' | 'warming' | 'deepening') {
+function getPulseLabelCopy(label: PulseLabel) {
   switch (label) {
     case 'deepening':
       return 'You have meaningful follow-through, lower tension, and stronger recent connection.';
@@ -95,7 +100,7 @@ function getPulseLabelCopy(label: 'strained' | 'fragile' | 'steady' | 'warming' 
   }
 }
 
-function getPulseTrendLabel(trend: 'rising' | 'steady' | 'dipping') {
+function getPulseTrendLabel(trend: PulseTrend) {
   switch (trend) {
     case 'rising':
       return 'Rising';
@@ -115,6 +120,123 @@ function formatLoveActionMetricDate(timestamp: number | null) {
     month: 'short',
     day: 'numeric',
   });
+}
+
+function getWindowLabel(window: MetricsWindow) {
+  switch (window) {
+    case '7d':
+      return '7-day';
+    case '30d':
+      return '30-day';
+    default:
+      return '90-day';
+  }
+}
+
+function MetricTrendChart({
+  title,
+  points,
+  color,
+  maxValue,
+  metric,
+  emptyCopy,
+}: {
+  title: string;
+  points: Array<{ id: string; label: string; score: number; connection: number; tension: number; streak: number }>;
+  color: string;
+  maxValue: number;
+  metric: 'score' | 'connection' | 'tension' | 'streak';
+  emptyCopy: string;
+}) {
+  if (points.length === 0) {
+    return (
+      <Surface style={styles.chartCard} elevation={0}>
+        <Text style={styles.chartTitle}>{title}</Text>
+        <Text style={styles.emptyCopy}>{emptyCopy}</Text>
+      </Surface>
+    );
+  }
+
+  return (
+    <Surface style={styles.chartCard} elevation={0}>
+      <Text style={styles.chartTitle}>{title}</Text>
+      <View style={styles.chartRow}>
+        {points.map(point => {
+          const value = metric === 'score'
+            ? point.score
+            : metric === 'connection'
+              ? point.connection
+              : metric === 'tension'
+                ? point.tension
+                : point.streak;
+          const height = Math.max(10, (Math.max(0, value) / maxValue) * 88);
+
+          return (
+            <View key={`${metric}-${point.id}`} style={styles.chartColumn}>
+              <Text style={styles.chartValue}>{metric === 'score' || metric === 'streak' ? Math.round(value) : value.toFixed(1)}</Text>
+              <View style={styles.chartTrack}>
+                <View style={[styles.chartBar, { height, backgroundColor: color }]} />
+              </View>
+              <Text style={styles.chartLabel}>{point.label}</Text>
+            </View>
+          );
+        })}
+      </View>
+    </Surface>
+  );
+}
+
+function DualMetricTrendChart({
+  title,
+  points,
+}: {
+  title: string;
+  points: Array<{ id: string; label: string; score: number; connection: number; tension: number; streak: number }>;
+}) {
+  if (points.length === 0) {
+    return (
+      <Surface style={styles.chartCard} elevation={0}>
+        <Text style={styles.chartTitle}>{title}</Text>
+        <Text style={styles.emptyCopy}>Shared snapshots will fill this in after your first metrics sync.</Text>
+      </Surface>
+    );
+  }
+
+  return (
+    <Surface style={styles.chartCard} elevation={0}>
+      <Text style={styles.chartTitle}>{title}</Text>
+      <View style={styles.chartLegendRow}>
+        <View style={styles.chartLegendItem}>
+          <View style={[styles.chartLegendDot, { backgroundColor: '#B25B63' }]} />
+          <Text style={styles.chartLegendLabel}>Connection</Text>
+        </View>
+        <View style={styles.chartLegendItem}>
+          <View style={[styles.chartLegendDot, { backgroundColor: '#7D8AB8' }]} />
+          <Text style={styles.chartLegendLabel}>Tension</Text>
+        </View>
+      </View>
+      <View style={styles.chartRow}>
+        {points.map(point => {
+          const connectionHeight = Math.max(8, (point.connection / 5) * 84);
+          const tensionHeight = Math.max(8, (point.tension / 5) * 84);
+
+          return (
+            <View key={`dual-${point.id}`} style={styles.chartColumn}>
+              <View style={styles.dualMetricHeader}>
+                <Text style={styles.chartMicroValue}>{point.connection.toFixed(1)}</Text>
+                <Text style={styles.chartMicroValue}>{point.tension.toFixed(1)}</Text>
+              </View>
+              <View style={styles.dualChartTrack}>
+                <View style={[styles.dualChartBar, { height: connectionHeight, backgroundColor: '#B25B63' }]} />
+                <View style={[styles.dualChartBar, { height: tensionHeight, backgroundColor: '#7D8AB8' }]} />
+              </View>
+              <Text style={styles.chartLabel}>{point.label}</Text>
+            </View>
+          );
+        })}
+      </View>
+    </Surface>
+  );
 }
 
 const MOOD_HINTS = ['Heavy', 'Tender', 'Steady', 'Open', 'Lit up'];
@@ -273,8 +395,10 @@ export default function InsightsScreen() {
   const hydrated = useInsightsStore(state => state.hydrated);
   const syncingPrivate = useInsightsStore(state => state.syncingPrivate);
   const syncingShared = useInsightsStore(state => state.syncingShared);
+  const syncingSnapshots = useInsightsStore(state => state.syncingSnapshots);
   const privateEntries = useInsightsStore(state => state.privateEntries);
   const sharedEntries = useInsightsStore(state => state.sharedEntries);
+  const metricSnapshots = useInsightsStore(state => state.metricSnapshots);
   const loveActions = useLoveActionStore(state => state.actions);
   const loveNotes = useMirrorMessageStore(state => state.messages);
   const [mood, setMood] = useState(3);
@@ -326,24 +450,26 @@ export default function InsightsScreen() {
     }
   }, [archiveFilter, laterEntries, privateOnlyEntries, sharedEntries]);
   const scoreWindowStart = useMemo(() => getMetricsWindowStart(scoreWindow), [scoreWindow]);
+  const relationshipEntries = profile?.coupleId ? sharedEntries : privateEntries;
   const scoreBreakdown = useMemo(
     () =>
       buildScoreBreakdown({
         actions: loveActions,
-        insights: [...privateEntries, ...sharedEntries],
+        insights: relationshipEntries,
         notes: loveNotes,
         windowStart: scoreWindowStart,
       }),
-    [loveActions, loveNotes, privateEntries, scoreWindowStart, sharedEntries],
+    [loveActions, loveNotes, relationshipEntries, scoreWindowStart],
   );
   const pulseSummary = useMemo(
     () =>
       buildPulseSummary({
-        entries: [...privateEntries, ...sharedEntries],
+        entries: relationshipEntries,
         score: scoreBreakdown.score,
         windowStart: scoreWindowStart,
+        trendDelta: scoreBreakdown.trendDelta,
       }),
-    [privateEntries, scoreBreakdown.score, scoreWindowStart, sharedEntries],
+    [relationshipEntries, scoreBreakdown.score, scoreBreakdown.trendDelta, scoreWindowStart],
   );
   const areaBalance = useMemo(
     () => buildAreaBalance(loveActions, scoreWindowStart),
@@ -353,11 +479,11 @@ export default function InsightsScreen() {
     () =>
       buildHistoryFeed({
         actions: loveActions,
-        insights: [...privateEntries, ...sharedEntries],
+        insights: relationshipEntries,
         notes: loveNotes,
         windowStart: scoreWindowStart,
       }),
-    [loveActions, loveNotes, privateEntries, scoreWindowStart, sharedEntries],
+    [loveActions, loveNotes, relationshipEntries, scoreWindowStart],
   );
   const recentRelationshipFollowThrough = useMemo(
     () =>
@@ -367,11 +493,23 @@ export default function InsightsScreen() {
         .slice(0, 5),
     [scoreBreakdown.completedActions],
   );
-  const connectionScore = scoreBreakdown.score;
-  const connectionScoreActions = scoreBreakdown.measuredActions;
-  const completedLoveActions = scoreBreakdown.completedActions;
-  const appreciatedLoveActions = scoreBreakdown.appreciatedActions;
-  const loadingCopy = !hydrated || relationshipSyncing || syncingPrivate || syncingShared;
+  const selectedWindowSnapshots = useMemo(
+    () => metricSnapshots.filter(snapshot => snapshot.window === scoreWindow),
+    [metricSnapshots, scoreWindow],
+  );
+  const latestSnapshot = selectedWindowSnapshots.at(-1) ?? null;
+  const chartPoints = useMemo(
+    () => buildMetricChartPoints(metricSnapshots, scoreWindow),
+    [metricSnapshots, scoreWindow],
+  );
+  const displayScore = latestSnapshot?.score ?? scoreBreakdown.score;
+  const displayPulseLabel = latestSnapshot?.pulseLabel ?? pulseSummary.label;
+  const displayPulseTrend = latestSnapshot?.pulseTrend ?? pulseSummary.trend;
+  const displayAverageMood = latestSnapshot?.averageMood ?? pulseSummary.averageMood;
+  const displayAverageConnection = latestSnapshot?.averageConnection ?? pulseSummary.averageConnection;
+  const displayAverageTension = latestSnapshot?.averageTension ?? pulseSummary.averageTension;
+  const displayStreak = latestSnapshot?.checkInStreakDays ?? pulseSummary.checkInStreakDays;
+  const loadingCopy = !hydrated || relationshipSyncing || syncingPrivate || syncingShared || (profile?.coupleId && syncingSnapshots);
   const canSubmit = hydrated && writtenCount > 0 && !saving;
 
   const resetForm = () => {
@@ -517,6 +655,20 @@ export default function InsightsScreen() {
     }
   };
 
+  const handleRecommendationPress = (recommendation: CoachingRecommendation) => {
+    if (recommendation.focus === 'insights') {
+      setSnackbar('Use the reflection form below to act on this recommendation.');
+      return;
+    }
+
+    navigation.navigate('Love');
+    setSnackbar(
+      recommendation.focus === 'loveActions'
+        ? 'Open Love to create or respond to a Love Action.'
+        : 'Open Love to send a guided Love Note.',
+    );
+  };
+
   const archiveDescription =
     archiveFilter === 'shared'
       ? 'Entries you or your partner have intentionally brought into the shared relationship space.'
@@ -556,498 +708,630 @@ export default function InsightsScreen() {
           style={styles.scrollView}
           contentContainerStyle={styles.content}
         >
-        <Text variant="headlineMedium" style={styles.header}>
-          Insights
-        </Text>
-        <Text style={styles.subheader}>
-          Check in with yourself, name the pulse between you, and choose whether this reflection stays private or becomes shared.
-        </Text>
-        <View style={styles.summaryRow}>
-          <View style={styles.summaryPill}>
-            <Text style={styles.summaryLabel}>Private {privateOnlyEntries.length}</Text>
+          <Text variant="headlineMedium" style={styles.header}>
+            Insights
+          </Text>
+          <Text style={styles.subheader}>
+            Check in with yourself, name the pulse between you, and choose whether this reflection stays private or becomes shared.
+          </Text>
+          <View style={styles.summaryRow}>
+            <View style={styles.summaryPill}>
+              <Text style={styles.summaryLabel}>Private {privateOnlyEntries.length}</Text>
+            </View>
+            <View style={styles.summaryPill}>
+              <Text style={styles.summaryLabel}>Later {laterEntries.length}</Text>
+            </View>
+            <View style={styles.summaryPill}>
+              <Text style={styles.summaryLabel}>Shared {sharedEntries.length}</Text>
+            </View>
+            <View style={styles.summaryPill}>
+              <Text style={styles.summaryLabel}>Pulse {displayPulseLabel}</Text>
+            </View>
+            <View style={styles.summaryPill}>
+              <Text style={styles.summaryLabel}>Score {Math.round(displayScore)}</Text>
+            </View>
+            <View style={styles.summaryPill}>
+              <Text style={styles.summaryLabel}>Streak {displayStreak}d</Text>
+            </View>
+            <View style={styles.summaryPill}>
+              <Text style={styles.summaryLabel}>{profile?.coupleId ? 'Connected' : 'Solo'}</Text>
+            </View>
           </View>
-          <View style={styles.summaryPill}>
-            <Text style={styles.summaryLabel}>Later {laterEntries.length}</Text>
-          </View>
-          <View style={styles.summaryPill}>
-            <Text style={styles.summaryLabel}>Shared {sharedEntries.length}</Text>
-          </View>
-          <View style={styles.summaryPill}>
-            <Text style={styles.summaryLabel}>Pulse {pulseSummary.label}</Text>
-          </View>
-          <View style={styles.summaryPill}>
-            <Text style={styles.summaryLabel}>Score {Math.round(connectionScore)}</Text>
-          </View>
-          <View style={styles.summaryPill}>
-            <Text style={styles.summaryLabel}>Streak {pulseSummary.checkInStreakDays}d</Text>
-          </View>
-          <View style={styles.summaryPill}>
-            <Text style={styles.summaryLabel}>{profile?.coupleId ? 'Connected' : 'Solo'}</Text>
-          </View>
-        </View>
-        {loadingCopy ? <Text style={styles.syncText}>Syncing your reflection space...</Text> : null}
-        {!!relationshipError ? <Text style={styles.errorText}>{relationshipError}</Text> : null}
-        {!profile?.coupleId ? (
-          <Card style={styles.connectionCard}>
-            <Card.Content style={styles.connectionCardContent}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Shared insights unlock after you connect
+          {loadingCopy ? <Text style={styles.syncText}>Syncing your reflection space...</Text> : null}
+          {!!relationshipError ? <Text style={styles.errorText}>{relationshipError}</Text> : null}
+          {!profile?.coupleId ? (
+            <Card style={styles.connectionCard}>
+              <Card.Content style={styles.connectionCardContent}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Shared insights unlock after you connect
+                </Text>
+                <Text style={styles.connectionBody}>
+                  You can save private reflections now. Connect in Us when you’re ready to share relationship pulse check-ins with your partner.
+                </Text>
+                <Button mode="contained" onPress={() => navigation.navigate('Us')} style={styles.primaryButton}>
+                  Go to Us
+                </Button>
+              </Card.Content>
+            </Card>
+          ) : null}
+          <Card style={styles.archiveCard}>
+            <Card.Content>
+              <View style={styles.sectionHeader}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Relationship pulse
+                </Text>
+                <Text style={styles.sectionMeta}>
+                  A blended read on shared reflections, tension, connection, and follow-through.
+                </Text>
+              </View>
+              <View style={styles.metricsRow}>
+                <View style={styles.metricPill}>
+                  <Text style={styles.metricLabel}>Pulse {displayPulseLabel}</Text>
+                </View>
+                <View style={styles.metricPill}>
+                  <Text style={styles.metricLabel}>Trend {getPulseTrendLabel(displayPulseTrend)}</Text>
+                </View>
+                <View style={styles.metricPill}>
+                  <Text style={styles.metricLabel}>Streak {displayStreak} days</Text>
+                </View>
+              </View>
+              <Text style={styles.archiveMeta}>{getPulseLabelCopy(displayPulseLabel)}</Text>
+              <View style={styles.metricsRow}>
+                <View style={styles.metricPill}>
+                  <Text style={styles.metricLabel}>Mood {displayAverageMood || 0}/5</Text>
+                </View>
+                <View style={styles.metricPill}>
+                  <Text style={styles.metricLabel}>Connection {displayAverageConnection || 0}/5</Text>
+                </View>
+                <View style={styles.metricPill}>
+                  <Text style={styles.metricLabel}>Tension {displayAverageTension || 0}/5</Text>
+                </View>
+              </View>
+              <Text style={styles.archiveMeta}>
+                {latestSnapshot
+                  ? `${latestSnapshot.capturedDay} snapshot loaded for the current ${getWindowLabel(scoreWindow)} window.`
+                  : pulseSummary.recentReflectionCount === 0
+                    ? 'No recent shared reflections are feeding the pulse yet. Save or share a check-in below to start building your history.'
+                    : `${pulseSummary.recentReflectionCount} recent reflections and ${scoreBreakdown.measuredNotes.length} Love Notes are informing this live pulse.`}
               </Text>
-              <Text style={styles.connectionBody}>
-                You can save private reflections now. Connect in Us when you’re ready to share relationship pulse check-ins with your partner.
-              </Text>
-              <Button mode="contained" onPress={() => navigation.navigate('Us')} style={styles.primaryButton}>
-                Go to Us
-              </Button>
             </Card.Content>
           </Card>
-        ) : null}
-        <Card style={styles.archiveCard}>
-          <Card.Content>
-            <View style={styles.sectionHeader}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Relationship pulse
+          <Card style={styles.archiveCard}>
+            <Card.Content>
+              <View style={styles.sectionHeader}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Connection Score
+                </Text>
+                <Text style={styles.sectionMeta}>
+                  Smarter weighting now factors recency, action difficulty, appreciation loops, reflection depth, emotional presence, and Love Note care.
+                </Text>
+              </View>
+              <Surface style={styles.segmentedWrap} elevation={0}>
+                <SegmentedButtons
+                  value={scoreWindow}
+                  onValueChange={nextValue => setScoreWindow(nextValue as MetricsWindow)}
+                  buttons={[
+                    { value: '7d', label: 'Last 7 days' },
+                    { value: '30d', label: 'Last 30 days' },
+                    { value: '90d', label: 'Last 90 days' },
+                  ]}
+                  style={styles.archiveFilterSelector}
+                  theme={{ roundness: 999 }}
+                />
+              </Surface>
+              <View style={styles.metricsRow}>
+                <View style={styles.metricPill}>
+                  <Text style={styles.metricLabel}>Score {Math.round(displayScore)}/100</Text>
+                </View>
+                <View style={styles.metricPill}>
+                  <Text style={styles.metricLabel}>Completed {scoreBreakdown.completedActions.length}</Text>
+                </View>
+                <View style={styles.metricPill}>
+                  <Text style={styles.metricLabel}>Appreciated {scoreBreakdown.appreciatedActions.length}</Text>
+                </View>
+              </View>
+              <View style={styles.metricsRow}>
+                <View style={styles.metricPill}>
+                  <Text style={styles.metricLabel}>Action reliability {Math.round(scoreBreakdown.actionReliability)}%</Text>
+                </View>
+                <View style={styles.metricPill}>
+                  <Text style={styles.metricLabel}>Reflection depth {Math.round(scoreBreakdown.reflectionScore)}%</Text>
+                </View>
+                <View style={styles.metricPill}>
+                  <Text style={styles.metricLabel}>Love Note care {Math.round(scoreBreakdown.noteCareScore)}%</Text>
+                </View>
+              </View>
+              <View style={styles.metricsRow}>
+                <View style={styles.metricPill}>
+                  <Text style={styles.metricLabel}>Appreciation loop {Math.round(scoreBreakdown.appreciationScore)}%</Text>
+                </View>
+                <View style={styles.metricPill}>
+                  <Text style={styles.metricLabel}>Emotional presence {Math.round(scoreBreakdown.emotionalPresenceScore)}%</Text>
+                </View>
+                <View style={styles.metricPill}>
+                  <Text style={styles.metricLabel}>Shared reflection ratio {Math.round(scoreBreakdown.sharedReflectionRatio)}%</Text>
+                </View>
+              </View>
+              <Text style={styles.archiveMeta}>
+                {scoreBreakdown.measuredActions.length === 0 && scoreBreakdown.measuredInsights.length === 0 && scoreBreakdown.measuredNotes.length === 0
+                  ? `No shared signals are feeding this ${getWindowLabel(scoreWindow)} score yet.`
+                  : `${scoreBreakdown.measuredActions.length} Love Actions, ${scoreBreakdown.measuredInsights.length} reflections, and ${scoreBreakdown.measuredNotes.length} Love Notes are shaping this ${getWindowLabel(scoreWindow)} score.`}
               </Text>
-              <Text style={styles.sectionMeta}>
-                A blended read on your recent reflections, tension, connection, and follow-through.
-              </Text>
-            </View>
-            <View style={styles.metricsRow}>
-              <View style={styles.metricPill}>
-                <Text style={styles.metricLabel}>Pulse {pulseSummary.label}</Text>
-              </View>
-              <View style={styles.metricPill}>
-                <Text style={styles.metricLabel}>Trend {getPulseTrendLabel(pulseSummary.trend)}</Text>
-              </View>
-              <View style={styles.metricPill}>
-                <Text style={styles.metricLabel}>Streak {pulseSummary.checkInStreakDays} days</Text>
-              </View>
-            </View>
-            <Text style={styles.archiveMeta}>{getPulseLabelCopy(pulseSummary.label)}</Text>
-            <View style={styles.metricsRow}>
-              <View style={styles.metricPill}>
-                <Text style={styles.metricLabel}>Mood {pulseSummary.averageMood || 0}/5</Text>
-              </View>
-              <View style={styles.metricPill}>
-                <Text style={styles.metricLabel}>Connection {pulseSummary.averageConnection || 0}/5</Text>
-              </View>
-              <View style={styles.metricPill}>
-                <Text style={styles.metricLabel}>Tension {pulseSummary.averageTension || 0}/5</Text>
-              </View>
-            </View>
-            <Text style={styles.archiveMeta}>
-              {pulseSummary.recentReflectionCount === 0
-                ? 'No recent reflections are feeding the pulse yet. Save a check-in below to start building your history.'
-                : `${pulseSummary.recentReflectionCount} recent reflections and ${scoreBreakdown.measuredNotes.length} Love Notes are informing this pulse.`}
-            </Text>
-          </Card.Content>
-        </Card>
-        <Card style={styles.archiveCard}>
-          <Card.Content>
-            <View style={styles.sectionHeader}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Connection Score
-              </Text>
-              <Text style={styles.sectionMeta}>
-                A fuller score based on Love Action follow-through, appreciation, shared reflections, tension relief, and Love Note momentum.
-              </Text>
-            </View>
-            <Surface style={styles.segmentedWrap} elevation={0}>
-              <SegmentedButtons
-                value={scoreWindow}
-                onValueChange={nextValue => setScoreWindow(nextValue as MetricsWindow)}
-                buttons={[
-                  { value: '7d', label: 'Last 7 days' },
-                  { value: '30d', label: 'Last 30 days' },
-                  { value: '90d', label: 'Last 90 days' },
-                ]}
-                style={styles.archiveFilterSelector}
-                theme={{ roundness: 999 }}
-              />
-            </Surface>
-            <View style={styles.metricsRow}>
-              <View style={styles.metricPill}>
-                <Text style={styles.metricLabel}>Score {Math.round(connectionScore)}/100</Text>
-              </View>
-              <View style={styles.metricPill}>
-                <Text style={styles.metricLabel}>Completed {completedLoveActions.length}</Text>
-              </View>
-              <View style={styles.metricPill}>
-                <Text style={styles.metricLabel}>Appreciated {appreciatedLoveActions.length}</Text>
-              </View>
-            </View>
-            <View style={styles.metricsRow}>
-              <View style={styles.metricPill}>
-                <Text style={styles.metricLabel}>Action follow-through {Math.round(scoreBreakdown.actionCoverage)}%</Text>
-              </View>
-              <View style={styles.metricPill}>
-                <Text style={styles.metricLabel}>Appreciation {Math.round(scoreBreakdown.appreciationCoverage)}%</Text>
-              </View>
-              <View style={styles.metricPill}>
-                <Text style={styles.metricLabel}>Note momentum {Math.round(scoreBreakdown.noteMomentum)}%</Text>
-              </View>
-            </View>
-            <Text style={styles.archiveMeta}>
-              {connectionScoreActions.length === 0
-                ? `No shared Love Actions are feeding this ${scoreWindow === '7d' ? '7-day' : scoreWindow === '30d' ? '30-day' : '90-day'} score yet. Once shared actions are scheduled and completed, Insights will start reflecting them here.`
-                : `${connectionScoreActions.length} shared Love Actions, ${scoreBreakdown.measuredInsights.length} reflections, and ${scoreBreakdown.measuredNotes.length} Love Notes are contributing to this ${scoreWindow === '7d' ? '7-day' : scoreWindow === '30d' ? '30-day' : '90-day'} score.`}
-            </Text>
-            <View style={styles.entryList}>
-              {recentRelationshipFollowThrough.length === 0 ? (
-                <Text style={styles.emptyCopy}>No completed Love Actions yet.</Text>
-              ) : (
-                recentRelationshipFollowThrough.map(action => (
-                  <Card key={action.id} style={styles.entryCard}>
-                    <Card.Content style={styles.entryCardContent}>
-                      <View style={styles.entryHeaderRow}>
-                        <View style={styles.entryHeaderCopy}>
-                          <Text variant="titleSmall" style={styles.entryDate}>
-                            {formatLoveActionMetricDate(action.lastCompletedAt ?? action.updatedAt)}
-                          </Text>
-                          <Text style={styles.entryMeta}>{action.title}</Text>
-                        </View>
-                        <View style={styles.visibilityPill}>
-                          <Text style={styles.visibilityPillText}>{action.status}</Text>
-                        </View>
-                      </View>
-                      <View style={styles.metricsRow}>
-                        <View style={styles.metricPill}>
-                          <Text style={styles.metricLabel}>Due {formatLoveActionMetricDate(action.nextDueAt)}</Text>
-                        </View>
-                        <View style={styles.metricPill}>
-                          <Text style={styles.metricLabel}>Confirmed {action.confirmationReaction ?? '—'}</Text>
-                        </View>
-                        <View style={styles.metricPill}>
-                          <Text style={styles.metricLabel}>Appreciated {action.appreciationReaction ?? '—'}</Text>
-                        </View>
-                      </View>
-                      {!!action.confirmationNote ? (
-                        <Text style={styles.entryDetail}>Confirmation note: {action.confirmationNote}</Text>
-                      ) : null}
-                      {!!action.appreciationNote ? (
-                        <Text style={styles.entryDetail}>Appreciation note: {action.appreciationNote}</Text>
-                      ) : null}
-                    </Card.Content>
-                  </Card>
-                ))
-              )}
-            </View>
-          </Card.Content>
-        </Card>
-        <Card style={styles.archiveCard}>
-          <Card.Content>
-            <View style={styles.sectionHeader}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Relationship area balance
-              </Text>
-              <Text style={styles.sectionMeta}>
-                Which kinds of care are actually being confirmed or appreciated in this window.
-              </Text>
-            </View>
-            <View style={styles.entryList}>
-              {areaBalance.length === 0 ? (
-                <Text style={styles.emptyCopy}>No confirmed or appreciated Love Actions are shaping area balance yet.</Text>
-              ) : (
-                areaBalance.map(item => (
-                  <Surface key={item.area} style={styles.entryCard} elevation={0}>
-                    <View style={styles.entryCardContent}>
-                      <View style={styles.entryHeaderRow}>
-                        <View style={styles.entryHeaderCopy}>
-                          <Text variant="titleSmall" style={styles.entryDate}>
-                            {LOVE_AREA_LABELS[item.area]}
-                          </Text>
-                          <Text style={styles.entryMeta}>{item.count} actions in this area</Text>
-                        </View>
-                        <View style={styles.visibilityPill}>
-                          <Text style={styles.visibilityPillText}>{Math.round(item.share)}%</Text>
-                        </View>
+              <View style={styles.entryList}>
+                {scoreBreakdown.componentScores.map(component => (
+                  <Surface key={component.id} style={styles.scoreComponentCard} elevation={0}>
+                    <View style={styles.scoreComponentHeader}>
+                      <Text variant="titleSmall" style={styles.entryDate}>
+                        {component.label}
+                      </Text>
+                      <View style={styles.visibilityPill}>
+                        <Text style={styles.visibilityPillText}>{Math.round(component.score)}%</Text>
                       </View>
                     </View>
+                    <Text style={styles.entryDetail}>{component.summary}</Text>
                   </Surface>
-                ))
-              )}
-            </View>
-          </Card.Content>
-        </Card>
-        <Card style={styles.archiveCard}>
-          <Card.Content>
-            <View style={styles.sectionHeader}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Relationship history
-              </Text>
-              <Text style={styles.sectionMeta}>
-                A mixed timeline of Love Notes, reflections, completions, and appreciations.
-              </Text>
-            </View>
-            <View style={styles.entryList}>
-              {historyFeed.length === 0 ? (
-                <Text style={styles.emptyCopy}>No recent history yet in this time window.</Text>
-              ) : (
-                historyFeed.map(event => (
-                  <Card key={event.id} style={styles.entryCard}>
-                    <Card.Content style={styles.entryCardContent}>
-                      <View style={styles.entryHeaderRow}>
-                        <View style={styles.entryHeaderCopy}>
-                          <Text variant="titleSmall" style={styles.entryDate}>
-                            {formatInsightDate(event.timestamp)}
-                          </Text>
-                          <Text style={styles.entryMeta}>{event.title}</Text>
+                ))}
+              </View>
+            </Card.Content>
+          </Card>
+          <Card style={styles.archiveCard}>
+            <Card.Content>
+              <View style={styles.sectionHeader}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Trends over time
+                </Text>
+                <Text style={styles.sectionMeta}>
+                  Daily Firestore snapshots preserve score and pulse history so your progress is not only inferred from the current moment.
+                </Text>
+              </View>
+              <View style={styles.chartStack}>
+                <MetricTrendChart
+                  title="Score trend"
+                  points={chartPoints}
+                  color="#B25B63"
+                  maxValue={100}
+                  metric="score"
+                  emptyCopy="Score history will appear after the first snapshot is written for this couple."
+                />
+                <DualMetricTrendChart title="Connection vs tension" points={chartPoints} />
+                <MetricTrendChart
+                  title="Check-in streak trend"
+                  points={chartPoints}
+                  color="#D79395"
+                  maxValue={Math.max(7, ...chartPoints.map(point => point.streak), 1)}
+                  metric="streak"
+                  emptyCopy="Streak history will appear after shared insights start landing."
+                />
+              </View>
+            </Card.Content>
+          </Card>
+          <Card style={styles.archiveCard}>
+            <Card.Content>
+              <View style={styles.sectionHeader}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Coaching recommendations
+                </Text>
+                <Text style={styles.sectionMeta}>
+                  These suggestions respond to weak areas, low follow-through, elevated tension, and gaps in affection or shared reflection.
+                </Text>
+              </View>
+              <View style={styles.entryList}>
+                {scoreBreakdown.recommendations.length === 0 ? (
+                  <Text style={styles.emptyCopy}>No urgent coaching prompts right now. Keep reinforcing what is already working.</Text>
+                ) : (
+                  scoreBreakdown.recommendations.map(recommendation => {
+                    const prompt = recommendation.promptId
+                      ? LOVE_NOTE_PROMPTS.find(item => item.id === recommendation.promptId) ?? null
+                      : null;
+                    return (
+                      <Surface key={recommendation.id} style={styles.entryCard} elevation={0}>
+                        <View style={styles.entryCardContent}>
+                          <View style={styles.entryHeaderRow}>
+                            <View style={styles.entryHeaderCopy}>
+                              <Text variant="titleSmall" style={styles.entryDate}>
+                                {recommendation.title}
+                              </Text>
+                              <Text style={styles.entryMeta}>{recommendation.ctaLabel}</Text>
+                            </View>
+                            <View style={styles.visibilityPill}>
+                              <Text style={styles.visibilityPillText}>{recommendation.focus}</Text>
+                            </View>
+                          </View>
+                          <Text style={styles.entryDetail}>{recommendation.body}</Text>
+                          <View style={styles.metricsRow}>
+                            {recommendation.area ? (
+                              <View style={styles.metricPill}>
+                                <Text style={styles.metricLabel}>Area {LOVE_AREA_LABELS[recommendation.area]}</Text>
+                              </View>
+                            ) : null}
+                            {recommendation.noteType ? (
+                              <View style={styles.metricPill}>
+                                <Text style={styles.metricLabel}>Tone {LOVE_NOTE_TYPE_LABELS[recommendation.noteType]}</Text>
+                              </View>
+                            ) : null}
+                            {prompt ? (
+                              <View style={styles.metricPill}>
+                                <Text style={styles.metricLabel}>Prompt {prompt.label}</Text>
+                              </View>
+                            ) : null}
+                          </View>
+                          <Button mode="contained-tonal" onPress={() => handleRecommendationPress(recommendation)} style={styles.shareButton}>
+                            {recommendation.ctaLabel}
+                          </Button>
                         </View>
-                        <View style={styles.visibilityPill}>
-                          <Text style={styles.visibilityPillText}>{event.badge}</Text>
+                      </Surface>
+                    );
+                  })
+                )}
+              </View>
+            </Card.Content>
+          </Card>
+          <Card style={styles.archiveCard}>
+            <Card.Content>
+              <View style={styles.sectionHeader}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Recent follow-through
+                </Text>
+                <Text style={styles.sectionMeta}>
+                  The most recent completions and appreciations influencing today’s score.
+                </Text>
+              </View>
+              <View style={styles.entryList}>
+                {recentRelationshipFollowThrough.length === 0 ? (
+                  <Text style={styles.emptyCopy}>No completed Love Actions yet.</Text>
+                ) : (
+                  recentRelationshipFollowThrough.map(action => (
+                    <Card key={action.id} style={styles.entryCard}>
+                      <Card.Content style={styles.entryCardContent}>
+                        <View style={styles.entryHeaderRow}>
+                          <View style={styles.entryHeaderCopy}>
+                            <Text variant="titleSmall" style={styles.entryDate}>
+                              {formatLoveActionMetricDate(action.lastCompletedAt ?? action.updatedAt)}
+                            </Text>
+                            <Text style={styles.entryMeta}>{action.title}</Text>
+                          </View>
+                          <View style={styles.visibilityPill}>
+                            <Text style={styles.visibilityPillText}>{action.status}</Text>
+                          </View>
+                        </View>
+                        <View style={styles.metricsRow}>
+                          <View style={styles.metricPill}>
+                            <Text style={styles.metricLabel}>Due {formatLoveActionMetricDate(action.nextDueAt)}</Text>
+                          </View>
+                          <View style={styles.metricPill}>
+                            <Text style={styles.metricLabel}>Confirmed {action.confirmationReaction ?? '—'}</Text>
+                          </View>
+                          <View style={styles.metricPill}>
+                            <Text style={styles.metricLabel}>Appreciated {action.appreciationReaction ?? '—'}</Text>
+                          </View>
+                        </View>
+                        {!!action.confirmationNote ? (
+                          <Text style={styles.entryDetail}>Confirmation note: {action.confirmationNote}</Text>
+                        ) : null}
+                        {!!action.appreciationNote ? (
+                          <Text style={styles.entryDetail}>Appreciation note: {action.appreciationNote}</Text>
+                        ) : null}
+                      </Card.Content>
+                    </Card>
+                  ))
+                )}
+              </View>
+            </Card.Content>
+          </Card>
+          <Card style={styles.archiveCard}>
+            <Card.Content>
+              <View style={styles.sectionHeader}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Relationship area balance
+                </Text>
+                <Text style={styles.sectionMeta}>
+                  Which kinds of care are actually being confirmed or appreciated in this window.
+                </Text>
+              </View>
+              <View style={styles.entryList}>
+                {areaBalance.length === 0 ? (
+                  <Text style={styles.emptyCopy}>No confirmed or appreciated Love Actions are shaping area balance yet.</Text>
+                ) : (
+                  areaBalance.map(item => (
+                    <Surface key={item.area} style={styles.entryCard} elevation={0}>
+                      <View style={styles.entryCardContent}>
+                        <View style={styles.entryHeaderRow}>
+                          <View style={styles.entryHeaderCopy}>
+                            <Text variant="titleSmall" style={styles.entryDate}>
+                              {LOVE_AREA_LABELS[item.area]}
+                            </Text>
+                            <Text style={styles.entryMeta}>{item.count} weighted actions in this area</Text>
+                          </View>
+                          <View style={styles.visibilityPill}>
+                            <Text style={styles.visibilityPillText}>{Math.round(item.share)}%</Text>
+                          </View>
                         </View>
                       </View>
-                      <Text style={styles.entryDetail}>{event.body}</Text>
-                    </Card.Content>
-                  </Card>
-                ))
-              )}
-            </View>
-          </Card.Content>
-        </Card>
-        <Surface style={styles.hero} elevation={0}>
-          <Text variant="titleMedium" style={styles.heroTitle}>
-            Daily check-in + relationship pulse
-          </Text>
-          <Text style={styles.heroBody}>
-            Capture how you feel, how connected you feel, where tension is sitting, what you appreciated, what you need, and what move helps next.
-          </Text>
-        </Surface>
-        <Card style={styles.card}>
-          <Card.Content style={styles.cardContent}>
-            <View style={styles.sectionHeader}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                {editingContext ? 'Edit this reflection' : 'Save this reflection as'}
-              </Text>
-              <Text style={styles.sectionMeta}>
-                {editingContext
-                  ? editingContext.source === 'shared'
-                    ? 'You are editing a shared insight that your partner can see'
-                    : 'You are editing a saved reflection in your personal archive'
-                  : 'Choose the privacy level first'}
-              </Text>
-            </View>
-            {editingContext ? (
-              <Surface style={styles.editBanner} elevation={0}>
-                <Text style={styles.editBannerTitle}>
-                  {editingContext.source === 'shared' ? 'Shared insight' : 'Saved reflection'}
+                    </Surface>
+                  ))
+                )}
+              </View>
+            </Card.Content>
+          </Card>
+          <Card style={styles.archiveCard}>
+            <Card.Content>
+              <View style={styles.sectionHeader}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Relationship history
                 </Text>
-                <Text style={styles.editBannerBody}>
-                  Visibility stays locked while editing. Use Share with partner from the archive when you want to move a private or later reflection into shared.
+                <Text style={styles.sectionMeta}>
+                  A mixed timeline of Love Notes, shared reflections, completions, and appreciations.
                 </Text>
-              </Surface>
-            ) : null}
-            <Surface style={styles.segmentedWrap} elevation={0}>
-              <SegmentedButtons
-                value={visibility}
-                onValueChange={nextValue => {
-                  if (!editingContext) {
-                    setVisibility(nextValue as InsightVisibility);
-                  }
-                }}
-                buttons={visibilityButtons}
-                style={styles.visibilitySelector}
-                theme={{ roundness: 999 }}
-              />
-            </Surface>
-            <HelperText type="info" visible>
-              {visibility === 'shared'
-                ? 'This entry will sync into the shared relationship space.'
-                : visibility === 'decideLater'
-                  ? 'This saves to your private archive until you decide whether to share it.'
-                  : 'This stays synced only to your account.'}
-            </HelperText>
-            <View style={styles.sectionHeader}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Pulse check
-              </Text>
-              <Text style={styles.sectionMeta}>Use the scale to name the temperature of today</Text>
-            </View>
-            <View style={styles.ratingStack}>
-              <RatingField label="How do you feel right now?" value={mood} onChange={setMood} hints={MOOD_HINTS} />
-              <RatingField
-                label="How connected do you feel to us?"
-                value={connection}
-                onChange={setConnection}
-                hints={CONNECTION_HINTS}
-              />
-              <RatingField label="How much tension is present?" value={tension} onChange={setTension} hints={TENSION_HINTS} />
-            </View>
-            <View style={styles.sectionHeader}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Words for today
-              </Text>
-              <Text style={styles.sectionMeta}>Write as little or as much as you need</Text>
-            </View>
-            <TextInput
-              mode="outlined"
-              label="What felt good today?"
-              value={appreciation}
-              onChangeText={setAppreciation}
-              multiline
-              numberOfLines={3}
-              style={styles.input}
-              contentStyle={styles.inputContent}
-              outlineStyle={styles.inputOutline}
-              outlineColor="#E7C9BF"
-              activeOutlineColor="#D79395"
-              placeholder="I felt close to you when..."
-            />
-            <TextInput
-              mode="outlined"
-              label="What do you need more of?"
-              value={need}
-              onChangeText={setNeed}
-              multiline
-              numberOfLines={3}
-              style={styles.input}
-              contentStyle={styles.inputContent}
-              outlineStyle={styles.inputOutline}
-              outlineColor="#E7C9BF"
-              activeOutlineColor="#D79395"
-              placeholder="I need more reassurance, softness, or clarity around..."
-            />
-            <TextInput
-              mode="outlined"
-              label="What truth or reflection is surfacing?"
-              value={reflection}
-              onChangeText={setReflection}
-              multiline
-              numberOfLines={4}
-              style={styles.input}
-              contentStyle={styles.inputContent}
-              outlineStyle={styles.inputOutline}
-              outlineColor="#E7C9BF"
-              activeOutlineColor="#D79395"
-              placeholder="Today I realized..."
-            />
-            <TextInput
-              mode="outlined"
-              label="What is one next step for us?"
-              value={nextStep}
-              onChangeText={setNextStep}
-              multiline
-              numberOfLines={3}
-              style={styles.input}
-              contentStyle={styles.inputContent}
-              outlineStyle={styles.inputOutline}
-              outlineColor="#E7C9BF"
-              activeOutlineColor="#D79395"
-              placeholder="Tonight let's..."
-            />
-            <HelperText type={writtenCount === 0 ? 'error' : 'info'} visible>
-              {writtenCount === 0
-                ? 'Add at least one written response before saving.'
-                : 'The strongest entries usually include one appreciation and one honest need.'}
-            </HelperText>
-            <View style={styles.actionsRow}>
-              <Button
-                mode="contained"
-                onPress={() => void handleSave()}
-                loading={saving}
-                disabled={!canSubmit}
-                style={[styles.primaryButton, !canSubmit && styles.primaryButtonDisabled]}
-                buttonColor={canSubmit ? '#B25B63' : '#D7C3BC'}
-                textColor={canSubmit ? '#FFF8F3' : '#8D7279'}
-              >
-                {editingContext ? 'Save changes' : 'Save insight'}
-              </Button>
+              </View>
+              <View style={styles.entryList}>
+                {historyFeed.length === 0 ? (
+                  <Text style={styles.emptyCopy}>No recent history yet in this time window.</Text>
+                ) : (
+                  historyFeed.map(event => (
+                    <Card key={event.id} style={styles.entryCard}>
+                      <Card.Content style={styles.entryCardContent}>
+                        <View style={styles.entryHeaderRow}>
+                          <View style={styles.entryHeaderCopy}>
+                            <Text variant="titleSmall" style={styles.entryDate}>
+                              {formatInsightDate(event.timestamp)}
+                            </Text>
+                            <Text style={styles.entryMeta}>{event.title}</Text>
+                          </View>
+                          <View style={styles.visibilityPill}>
+                            <Text style={styles.visibilityPillText}>{event.badge}</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.entryDetail}>{event.body}</Text>
+                      </Card.Content>
+                    </Card>
+                  ))
+                )}
+              </View>
+            </Card.Content>
+          </Card>
+          <Surface style={styles.hero} elevation={0}>
+            <Text variant="titleMedium" style={styles.heroTitle}>
+              Daily check-in + relationship pulse
+            </Text>
+            <Text style={styles.heroBody}>
+              Capture how you feel, how connected you feel, where tension is sitting, what you appreciated, what you need, and what move helps next.
+            </Text>
+          </Surface>
+          <Card style={styles.card}>
+            <Card.Content style={styles.cardContent}>
+              <View style={styles.sectionHeader}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  {editingContext ? 'Edit this reflection' : 'Save this reflection as'}
+                </Text>
+                <Text style={styles.sectionMeta}>
+                  {editingContext
+                    ? editingContext.source === 'shared'
+                      ? 'You are editing a shared insight that your partner can see'
+                      : 'You are editing a saved reflection in your personal archive'
+                    : 'Choose the privacy level first'}
+                </Text>
+              </View>
               {editingContext ? (
-                <Button mode="outlined" onPress={cancelEditing} disabled={saving}>
-                  Cancel edit
-                </Button>
-              ) : (
-                <Button mode="outlined" onPress={resetForm} disabled={saving}>
-                  Clear form
-                </Button>
-              )}
-            </View>
-          </Card.Content>
-        </Card>
-        <Card style={styles.archiveCard}>
-          <Card.Content>
-            <View style={styles.sectionHeader}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Saved reflections
-              </Text>
-              <Text style={styles.sectionMeta}>Filter your archive by privacy state</Text>
-            </View>
-            <Surface style={styles.segmentedWrap} elevation={0}>
-              <SegmentedButtons
-                value={archiveFilter}
-                onValueChange={nextValue => setArchiveFilter(nextValue as ArchiveFilter)}
-                buttons={[
-                  { value: 'private', label: 'Private' },
-                  { value: 'decideLater', label: 'Later' },
-                  { value: 'shared', label: 'Shared' },
-                ]}
-                style={styles.archiveFilterSelector}
-                theme={{ roundness: 999 }}
-              />
-            </Surface>
-            <Text style={styles.archiveMeta}>{archiveDescription}</Text>
-            <View style={styles.entryList}>
-              {archiveEntries.length === 0 ? (
-                <Text style={styles.emptyCopy}>
-                  {archiveFilter === 'shared'
-                    ? profile?.coupleId
-                      ? 'Nothing shared yet. Save one as Share or share a saved reflection later.'
-                      : 'Connect in Us first to unlock shared insights.'
-                    : archiveFilter === 'decideLater'
-                      ? 'No later reflections yet. Save one with the Later option above.'
-                      : 'No private reflections yet. Save your first reflection above.'}
+                <Surface style={styles.editBanner} elevation={0}>
+                  <Text style={styles.editBannerTitle}>
+                    {editingContext.source === 'shared' ? 'Shared insight' : 'Saved reflection'}
+                  </Text>
+                  <Text style={styles.editBannerBody}>
+                    Visibility stays locked while editing. Use Share with partner from the archive when you want to move a private or later reflection into shared.
+                  </Text>
+                </Surface>
+              ) : null}
+              <Surface style={styles.segmentedWrap} elevation={0}>
+                <SegmentedButtons
+                  value={visibility}
+                  onValueChange={nextValue => {
+                    if (!editingContext) {
+                      setVisibility(nextValue as InsightVisibility);
+                    }
+                  }}
+                  buttons={visibilityButtons}
+                  style={styles.visibilitySelector}
+                  theme={{ roundness: 999 }}
+                />
+              </Surface>
+              <HelperText type="info" visible>
+                {visibility === 'shared'
+                  ? 'This entry will sync into the shared relationship space.'
+                  : visibility === 'decideLater'
+                    ? 'This saves to your private archive until you decide whether to share it.'
+                    : 'This stays synced only to your account.'}
+              </HelperText>
+              <View style={styles.sectionHeader}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Pulse check
                 </Text>
-              ) : (
-                archiveEntries.map(entry => {
-                  const linkedPrivateEntryId = entry.visibility === 'shared'
-                    ? linkedPrivateEntriesBySharedId.get(entry.id) ?? null
-                    : null;
-                  const isOwnEntry = entry.createdByUserId === user?.uid;
-                  const source = archiveFilter === 'shared' ? 'shared' : 'private';
-                  const isEditingEntry =
-                    editingContext?.entry.id === entry.id && editingContext.source === source;
-                  return (
-                    <InsightCard
-                      key={entry.id}
-                      entry={entry}
-                      showAuthor={archiveFilter === 'shared' && !isOwnEntry}
-                      shareEnabled={
-                        source === 'private' && !!profile?.coupleId && entry.visibility !== 'shared'
-                      }
-                      sharing={sharingEntryId === entry.id}
-                      managing={deletingEntryId === entry.id || saving}
-                      isEditing={isEditingEntry}
-                      canManage={isOwnEntry}
-                      onShare={
-                        source === 'private' ? () => void handleSharePrivateEntry(entry) : undefined
-                      }
-                      onEdit={
-                        isOwnEntry
-                          ? () =>
-                              handleStartEditing({
-                                entry,
-                                source,
-                                linkedPrivateEntryId,
-                              })
-                          : undefined
-                      }
-                      onDelete={
-                        isOwnEntry
-                          ? () =>
-                              setDeleteContext({
-                                entry,
-                                source,
-                                linkedPrivateEntryId,
-                              })
-                          : undefined
-                      }
-                    />
-                  );
-                })
-              )}
-            </View>
-          </Card.Content>
-        </Card>
+                <Text style={styles.sectionMeta}>Use the scale to name the temperature of today</Text>
+              </View>
+              <View style={styles.ratingStack}>
+                <RatingField label="How do you feel right now?" value={mood} onChange={setMood} hints={MOOD_HINTS} />
+                <RatingField
+                  label="How connected do you feel to us?"
+                  value={connection}
+                  onChange={setConnection}
+                  hints={CONNECTION_HINTS}
+                />
+                <RatingField label="How much tension is present?" value={tension} onChange={setTension} hints={TENSION_HINTS} />
+              </View>
+              <View style={styles.sectionHeader}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Words for today
+                </Text>
+                <Text style={styles.sectionMeta}>Write as little or as much as you need</Text>
+              </View>
+              <TextInput
+                mode="outlined"
+                label="What felt good today?"
+                value={appreciation}
+                onChangeText={setAppreciation}
+                multiline
+                numberOfLines={3}
+                style={styles.input}
+                contentStyle={styles.inputContent}
+                outlineStyle={styles.inputOutline}
+                outlineColor="#E7C9BF"
+                activeOutlineColor="#D79395"
+                placeholder="I felt close to you when..."
+              />
+              <TextInput
+                mode="outlined"
+                label="What do you need more of?"
+                value={need}
+                onChangeText={setNeed}
+                multiline
+                numberOfLines={3}
+                style={styles.input}
+                contentStyle={styles.inputContent}
+                outlineStyle={styles.inputOutline}
+                outlineColor="#E7C9BF"
+                activeOutlineColor="#D79395"
+                placeholder="I need more reassurance, softness, or clarity around..."
+              />
+              <TextInput
+                mode="outlined"
+                label="What truth or reflection is surfacing?"
+                value={reflection}
+                onChangeText={setReflection}
+                multiline
+                numberOfLines={4}
+                style={styles.input}
+                contentStyle={styles.inputContent}
+                outlineStyle={styles.inputOutline}
+                outlineColor="#E7C9BF"
+                activeOutlineColor="#D79395"
+                placeholder="Today I realized..."
+              />
+              <TextInput
+                mode="outlined"
+                label="What is one next step for us?"
+                value={nextStep}
+                onChangeText={setNextStep}
+                multiline
+                numberOfLines={3}
+                style={styles.input}
+                contentStyle={styles.inputContent}
+                outlineStyle={styles.inputOutline}
+                outlineColor="#E7C9BF"
+                activeOutlineColor="#D79395"
+                placeholder="Tonight let's..."
+              />
+              <HelperText type={writtenCount === 0 ? 'error' : 'info'} visible>
+                {writtenCount === 0
+                  ? 'Add at least one written response before saving.'
+                  : 'The strongest entries usually include one appreciation and one honest need.'}
+              </HelperText>
+              <View style={styles.actionsRow}>
+                <Button
+                  mode="contained"
+                  onPress={() => void handleSave()}
+                  loading={saving}
+                  disabled={!canSubmit}
+                  style={[styles.primaryButton, !canSubmit && styles.primaryButtonDisabled]}
+                  buttonColor={canSubmit ? '#B25B63' : '#D7C3BC'}
+                  textColor={canSubmit ? '#FFF8F3' : '#8D7279'}
+                >
+                  {editingContext ? 'Save changes' : 'Save insight'}
+                </Button>
+                {editingContext ? (
+                  <Button mode="outlined" onPress={cancelEditing} disabled={saving}>
+                    Cancel edit
+                  </Button>
+                ) : (
+                  <Button mode="outlined" onPress={resetForm} disabled={saving}>
+                    Clear form
+                  </Button>
+                )}
+              </View>
+            </Card.Content>
+          </Card>
+          <Card style={styles.archiveCard}>
+            <Card.Content>
+              <View style={styles.sectionHeader}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Saved reflections
+                </Text>
+                <Text style={styles.sectionMeta}>Filter your archive by privacy state</Text>
+              </View>
+              <Surface style={styles.segmentedWrap} elevation={0}>
+                <SegmentedButtons
+                  value={archiveFilter}
+                  onValueChange={nextValue => setArchiveFilter(nextValue as ArchiveFilter)}
+                  buttons={[
+                    { value: 'private', label: 'Private' },
+                    { value: 'decideLater', label: 'Later' },
+                    { value: 'shared', label: 'Shared' },
+                  ]}
+                  style={styles.archiveFilterSelector}
+                  theme={{ roundness: 999 }}
+                />
+              </Surface>
+              <Text style={styles.archiveMeta}>{archiveDescription}</Text>
+              <View style={styles.entryList}>
+                {archiveEntries.length === 0 ? (
+                  <Text style={styles.emptyCopy}>
+                    {archiveFilter === 'shared'
+                      ? profile?.coupleId
+                        ? 'Nothing shared yet. Save one as Share or share a saved reflection later.'
+                        : 'Connect in Us first to unlock shared insights.'
+                      : archiveFilter === 'decideLater'
+                        ? 'No later reflections yet. Save one with the Later option above.'
+                        : 'No private reflections yet. Save your first reflection above.'}
+                  </Text>
+                ) : (
+                  archiveEntries.map(entry => {
+                    const linkedPrivateEntryId = entry.visibility === 'shared'
+                      ? linkedPrivateEntriesBySharedId.get(entry.id) ?? null
+                      : null;
+                    const isOwnEntry = entry.createdByUserId === user?.uid;
+                    const source = archiveFilter === 'shared' ? 'shared' : 'private';
+                    const isEditingEntry =
+                      editingContext?.entry.id === entry.id && editingContext.source === source;
+                    return (
+                      <InsightCard
+                        key={entry.id}
+                        entry={entry}
+                        showAuthor={archiveFilter === 'shared' && !isOwnEntry}
+                        shareEnabled={
+                          source === 'private' && !!profile?.coupleId && entry.visibility !== 'shared'
+                        }
+                        sharing={sharingEntryId === entry.id}
+                        managing={deletingEntryId === entry.id || saving}
+                        isEditing={isEditingEntry}
+                        canManage={isOwnEntry}
+                        onShare={
+                          source === 'private' ? () => void handleSharePrivateEntry(entry) : undefined
+                        }
+                        onEdit={
+                          isOwnEntry
+                            ? () =>
+                                handleStartEditing({
+                                  entry,
+                                  source,
+                                  linkedPrivateEntryId,
+                                })
+                            : undefined
+                        }
+                        onDelete={
+                          isOwnEntry
+                            ? () =>
+                                setDeleteContext({
+                                  entry,
+                                  source,
+                                  linkedPrivateEntryId,
+                                })
+                            : undefined
+                        }
+                      />
+                    );
+                  })
+                )}
+              </View>
+            </Card.Content>
+          </Card>
         </ScrollView>
       </SafeAreaView>
       <Portal>
@@ -1215,6 +1499,9 @@ const styles = StyleSheet.create({
   visibilitySelector: {
     marginTop: 0,
   },
+  archiveFilterSelector: {
+    marginTop: 0,
+  },
   ratingStack: {
     gap: 10,
   },
@@ -1290,9 +1577,6 @@ const styles = StyleSheet.create({
   archiveCard: {
     borderRadius: 24,
     backgroundColor: '#FFF7F2',
-  },
-  archiveFilterSelector: {
-    marginTop: 0,
   },
   archiveMeta: {
     marginTop: 8,
@@ -1414,6 +1698,117 @@ const styles = StyleSheet.create({
   emptyCopy: {
     color: '#7C5964',
     lineHeight: 21,
+  },
+  chartStack: {
+    gap: 10,
+    marginTop: 14,
+  },
+  chartCard: {
+    borderRadius: 20,
+    backgroundColor: '#FFF8F3',
+    borderWidth: 1,
+    borderColor: '#F0DED4',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  chartTitle: {
+    color: '#3F2831',
+    fontWeight: '700',
+  },
+  chartRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  chartColumn: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 6,
+  },
+  chartValue: {
+    color: '#7C5964',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  chartMicroValue: {
+    color: '#7C5964',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  chartTrack: {
+    width: '100%',
+    minHeight: 92,
+    borderRadius: 14,
+    backgroundColor: '#FBEAE3',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 4,
+    paddingBottom: 4,
+  },
+  chartBar: {
+    width: '100%',
+    borderRadius: 10,
+  },
+  chartLabel: {
+    color: '#8F6B74',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  chartLegendRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  chartLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  chartLegendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+  },
+  chartLegendLabel: {
+    color: '#7C5964',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  dualMetricHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  dualChartTrack: {
+    width: '100%',
+    minHeight: 92,
+    borderRadius: 14,
+    backgroundColor: '#FBEAE3',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 4,
+    paddingHorizontal: 5,
+    paddingBottom: 4,
+  },
+  dualChartBar: {
+    flex: 1,
+    borderRadius: 10,
+  },
+  scoreComponentCard: {
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: '#FFF8F3',
+    borderWidth: 1,
+    borderColor: '#F0DED4',
+    gap: 6,
+  },
+  scoreComponentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 8,
   },
   dialog: {
     backgroundColor: '#FFF7F2',

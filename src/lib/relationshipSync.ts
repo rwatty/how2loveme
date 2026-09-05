@@ -21,6 +21,12 @@ import {
   type LoveNoteTag,
   type LoveNoteType,
 } from '../lib/loveNotes';
+import {
+  type MetricsWindow,
+  type PulseLabel,
+  type PulseTrend,
+  type RelationshipMetricSnapshot,
+} from '../lib/relationshipMetrics';
 import { useCalendarStore, type CalendarEvent } from '../store/useCalendarStore';
 import {
   useInsightsStore,
@@ -151,6 +157,9 @@ const LOVE_ACTION_STATUSES: LoveActionStatus[] = [
   'cancelled',
 ];
 const NOTIFICATION_PRIVACY_PREFERENCES: NotificationPrivacyPreference[] = ['detailed', 'discreet', 'off'];
+const METRICS_WINDOWS: MetricsWindow[] = ['7d', '30d', '90d'];
+const PULSE_LABELS: PulseLabel[] = ['strained', 'fragile', 'steady', 'warming', 'deepening'];
+const PULSE_TRENDS: PulseTrend[] = ['rising', 'steady', 'dipping'];
 
 function isOneOf<T extends string>(value: any, validValues: T[]): value is T {
   return typeof value === 'string' && validValues.includes(value as T);
@@ -186,6 +195,18 @@ function mapLoveActionStatus(value: any): LoveActionStatus {
 
 function mapNotificationPrivacyPreference(value: any): NotificationPrivacyPreference {
   return isOneOf(value, NOTIFICATION_PRIVACY_PREFERENCES) ? value : 'discreet';
+}
+
+function mapMetricsWindow(value: any): MetricsWindow {
+  return isOneOf(value, METRICS_WINDOWS) ? value : '30d';
+}
+
+function mapPulseLabel(value: any): PulseLabel {
+  return isOneOf(value, PULSE_LABELS) ? value : 'steady';
+}
+
+function mapPulseTrend(value: any): PulseTrend {
+  return isOneOf(value, PULSE_TRENDS) ? value : 'steady';
 }
 
 function mapProfile(userId: string, data: any, fallbackEmail: string): RelationshipProfile {
@@ -369,6 +390,39 @@ function mapInsightEntry(document: any): InsightEntry {
   };
 }
 
+function mapMetricSnapshot(document: any): RelationshipMetricSnapshot {
+  const data = document.data();
+
+  return {
+    id: document.id,
+    window: mapMetricsWindow(data?.window),
+    capturedDay: typeof data?.capturedDay === 'string' ? data.capturedDay : document.id,
+    capturedDate: toMillis(data?.capturedDate),
+    updatedAt: toMillis(data?.updatedAt),
+    score: Number.isFinite(Number(data?.score)) ? Number(data.score) : 0,
+    pulseLabel: mapPulseLabel(data?.pulseLabel),
+    pulseTrend: mapPulseTrend(data?.pulseTrend),
+    averageMood: Number.isFinite(Number(data?.averageMood)) ? Number(data.averageMood) : 0,
+    averageConnection: Number.isFinite(Number(data?.averageConnection)) ? Number(data.averageConnection) : 0,
+    averageTension: Number.isFinite(Number(data?.averageTension)) ? Number(data.averageTension) : 0,
+    checkInStreakDays: Number.isFinite(Number(data?.checkInStreakDays)) ? Number(data.checkInStreakDays) : 0,
+    sharedInsightCount: Number.isFinite(Number(data?.sharedInsightCount)) ? Number(data.sharedInsightCount) : 0,
+    loveNoteCount: Number.isFinite(Number(data?.loveNoteCount)) ? Number(data.loveNoteCount) : 0,
+    completedActionCount: Number.isFinite(Number(data?.completedActionCount)) ? Number(data.completedActionCount) : 0,
+    appreciatedActionCount: Number.isFinite(Number(data?.appreciatedActionCount)) ? Number(data.appreciatedActionCount) : 0,
+    actionReliability: Number.isFinite(Number(data?.actionReliability)) ? Number(data.actionReliability) : 0,
+    appreciationScore: Number.isFinite(Number(data?.appreciationScore)) ? Number(data.appreciationScore) : 0,
+    reflectionScore: Number.isFinite(Number(data?.reflectionScore)) ? Number(data.reflectionScore) : 0,
+    noteCareScore: Number.isFinite(Number(data?.noteCareScore)) ? Number(data.noteCareScore) : 0,
+    emotionalPresenceScore: Number.isFinite(Number(data?.emotionalPresenceScore)) ? Number(data.emotionalPresenceScore) : 0,
+    dominantArea: data?.dominantArea ? mapLoveArea(data.dominantArea) : null,
+    weakestArea: data?.weakestArea ? mapLoveArea(data.weakestArea) : null,
+    recommendationTitles: Array.isArray(data?.recommendationTitles)
+      ? data.recommendationTitles.filter((value: unknown): value is string => typeof value === 'string')
+      : [],
+  };
+}
+
 export type LovePreferenceInput = {
   area: LoveArea;
   actionText: string;
@@ -445,6 +499,7 @@ export function startRelationshipSync(user: User) {
   calendarStore.setSyncing(true);
   insightsStore.setSyncingPrivate(true);
   insightsStore.setSyncingShared(true);
+  insightsStore.setSyncingSnapshots(true);
 
   const userRef = doc(firestore, 'users', user.uid);
   const lovePreferencesQuery = query(
@@ -474,6 +529,7 @@ export function startRelationshipSync(user: User) {
   let unsubscribeCalendar = () => {};
   let unsubscribeLoveActions = () => {};
   let unsubscribeSharedInsights = () => {};
+  let unsubscribeMetricSnapshots = () => {};
   let unsubscribePartnerReveal = () => {};
 
   const stopMessageSync = () => {
@@ -499,6 +555,13 @@ export function startRelationshipSync(user: User) {
     unsubscribeSharedInsights = () => {};
     useInsightsStore.getState().replaceSharedEntries([]);
     useInsightsStore.getState().setSyncingShared(false);
+  };
+
+  const stopMetricSnapshotsSync = () => {
+    unsubscribeMetricSnapshots();
+    unsubscribeMetricSnapshots = () => {};
+    useInsightsStore.getState().replaceMetricSnapshots([]);
+    useInsightsStore.getState().setSyncingSnapshots(false);
   };
 
   const stopPartnerRevealSync = () => {
@@ -551,6 +614,7 @@ export function startRelationshipSync(user: User) {
           useMirrorMessageStore.getState().setSyncing(false);
           useCalendarStore.getState().setSyncing(false);
           useInsightsStore.getState().setSyncingShared(false);
+          useInsightsStore.getState().setSyncingSnapshots(false);
           state.setPartnerReveal(null);
         }
         return;
@@ -560,6 +624,7 @@ export function startRelationshipSync(user: User) {
       stopCalendarSync();
       stopLoveActionSync();
       stopSharedInsightsSync();
+      stopMetricSnapshotsSync();
       stopPartnerRevealSync();
 
       if (!nextProfile.coupleId) {
@@ -568,6 +633,7 @@ export function startRelationshipSync(user: User) {
         useMirrorMessageStore.getState().setSyncing(false);
         useCalendarStore.getState().setSyncing(false);
         useInsightsStore.getState().setSyncingShared(false);
+        useInsightsStore.getState().setSyncingSnapshots(false);
         state.setPartnerReveal(null);
         return;
       }
@@ -577,6 +643,7 @@ export function startRelationshipSync(user: User) {
       useMirrorMessageStore.getState().setSyncing(true);
       useCalendarStore.getState().setSyncing(true);
       useInsightsStore.getState().setSyncingShared(true);
+      useInsightsStore.getState().setSyncingSnapshots(true);
 
       const messagesQuery = query(
         collection(firestore, 'couples', nextProfile.coupleId, 'mirrorMessages'),
@@ -597,6 +664,11 @@ export function startRelationshipSync(user: User) {
         collection(firestore, 'couples', nextProfile.coupleId, 'insights'),
         orderBy('createdAt', 'desc'),
         limit(100),
+      );
+      const metricSnapshotsQuery = query(
+        collection(firestore, 'couples', nextProfile.coupleId, 'metricSnapshots'),
+        orderBy('capturedDate', 'asc'),
+        limit(360),
       );
       const partnerRevealCollection = collection(firestore, 'couples', nextProfile.coupleId, 'preferenceReveals');
 
@@ -656,6 +728,20 @@ export function startRelationshipSync(user: User) {
         },
       );
 
+      unsubscribeMetricSnapshots = onSnapshot(
+        metricSnapshotsQuery,
+        metricSnapshot => {
+          useInsightsStore.getState().replaceMetricSnapshots(metricSnapshot.docs.map(mapMetricSnapshot));
+          useInsightsStore.getState().setSyncingSnapshots(false);
+        },
+        error => {
+          useRelationshipStore.getState().setError(
+            error.message ?? 'Unable to sync your relationship metrics right now.',
+          );
+          useInsightsStore.getState().setSyncingSnapshots(false);
+        },
+      );
+
       unsubscribePartnerReveal = onSnapshot(
         partnerRevealCollection,
         revealSnapshot => {
@@ -684,6 +770,7 @@ export function startRelationshipSync(user: User) {
       useCalendarStore.getState().setSyncing(false);
       useInsightsStore.getState().setSyncingPrivate(false);
       useInsightsStore.getState().setSyncingShared(false);
+      useInsightsStore.getState().setSyncingSnapshots(false);
     },
   );
 
@@ -723,6 +810,7 @@ export function startRelationshipSync(user: User) {
     stopCalendarSync();
     stopLoveActionSync();
     stopSharedInsightsSync();
+    stopMetricSnapshotsSync();
     stopPartnerRevealSync();
     activeCoupleId = null;
     useRelationshipStore.getState().setSyncing(false);
@@ -732,6 +820,7 @@ export function startRelationshipSync(user: User) {
     useCalendarStore.getState().setSyncing(false);
     useInsightsStore.getState().setSyncingPrivate(false);
     useInsightsStore.getState().setSyncingShared(false);
+    useInsightsStore.getState().setSyncingSnapshots(false);
   };
 }
 
