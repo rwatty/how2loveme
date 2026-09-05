@@ -4,6 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth } from '@react-native-firebase/auth';
+import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons/static';
 import Svg, { Circle, Defs, Line, LinearGradient, Path, Stop } from 'react-native-svg';
 import JumpToSectionFab, { type JumpSection } from '../components/JumpToSectionFab';
 import {
@@ -125,6 +126,118 @@ function getRecommendationFocusLabel(focus: CoachingRecommendation['focus']) {
     default:
       return 'Insight';
   }
+}
+
+function getSectionIconName(section: 'pulse' | 'score' | 'trends' | 'coaching' | 'history' | 'checkin' | 'saved') {
+  switch (section) {
+    case 'pulse':
+      return 'heart-pulse';
+    case 'score':
+      return 'chart-line';
+    case 'trends':
+      return 'chart-timeline-variant';
+    case 'coaching':
+      return 'lightbulb-on-outline';
+    case 'history':
+      return 'history';
+    case 'checkin':
+      return 'notebook-check-outline';
+    default:
+      return 'content-save-outline';
+  }
+}
+
+function getVisibilityBadgeIconName(visibility: InsightVisibility) {
+  switch (visibility) {
+    case 'private':
+      return 'lock-outline';
+    case 'decideLater':
+      return 'clock-outline';
+    default:
+      return 'account-group-outline';
+  }
+}
+
+function getPulseTrendIconName(trend: PulseTrend) {
+  switch (trend) {
+    case 'rising':
+      return 'trending-up';
+    case 'dipping':
+      return 'trending-down';
+    default:
+      return 'trending-neutral';
+  }
+}
+
+function getRecommendationFocusIconName(focus: CoachingRecommendation['focus']) {
+  switch (focus) {
+    case 'loveActions':
+      return 'checkbox-marked-circle-outline';
+    case 'loveNotes':
+      return 'card-text-outline';
+    default:
+      return 'notebook-outline';
+  }
+}
+
+function getHistoryBadgeIconName(badge: string) {
+  switch (badge) {
+    case 'Love Note':
+      return 'heart-outline';
+    case 'Shared insight':
+      return 'account-group-outline';
+    case 'Reflection':
+      return 'notebook-outline';
+    case 'Done':
+      return 'check-circle-outline';
+    case 'Appreciated':
+      return 'hand-heart-outline';
+    default:
+      return 'tag-outline';
+  }
+}
+
+function StatusPill({
+  icon,
+  label,
+  style,
+  textStyle,
+}: {
+  icon: string;
+  label: string;
+  style?: any;
+  textStyle?: any;
+}) {
+  return (
+    <View style={[styles.iconPill, style]}>
+      <MaterialDesignIcons name={icon as any} size={14} color="#6B4A55" />
+      <Text style={[styles.iconPillText, textStyle]}>{label}</Text>
+    </View>
+  );
+}
+
+function SectionHeading({
+  section,
+  title,
+  meta,
+}: {
+  section: 'pulse' | 'score' | 'trends' | 'coaching' | 'history' | 'checkin' | 'saved';
+  title: string;
+  meta?: string;
+}) {
+  return (
+    <View style={styles.sectionHeaderRow}>
+      <View style={styles.sectionIconWrap}>
+        <MaterialDesignIcons name={getSectionIconName(section) as any} size={18} color="#B25B63" />
+      </View>
+      <View style={styles.sectionHeaderCopy}>
+        <Text variant="titleMedium" style={styles.cardTitle}>
+          {title}
+        </Text>
+        {meta ? <Text style={styles.sectionMeta}>{meta}</Text> : null}
+      </View>
+    </View>
+  );
 }
 
 function formatSignedValue(value: number, suffix = '') {
@@ -316,15 +429,19 @@ function InsightsTopSummaryCard({
           <Text style={styles.topSummaryScore}>{Math.round(score)}</Text>
           <Text style={styles.topSummaryScoreMeta}>Connection Score</Text>
           <View style={styles.summaryRow}>
-            <View style={[styles.summaryPill, delta > 0 ? styles.summaryPillPositive : delta < 0 ? styles.summaryPillNegative : null]}>
-              <Text style={styles.summaryLabel}>{formatSignedValue(delta, ' pts')}</Text>
-            </View>
-            <View style={styles.summaryPill}>
-              <Text style={styles.summaryLabel}>Pulse {pulseLabel}</Text>
-            </View>
-            <View style={styles.summaryPill}>
-              <Text style={styles.summaryLabel}>{getPulseTrendLabel(pulseTrend)}</Text>
-            </View>
+            <StatusPill
+              icon={getPulseTrendIconName(pulseTrend)}
+              label={formatSignedValue(delta, ' pts')}
+              style={[styles.summaryPill, delta > 0 ? styles.summaryPillPositive : delta < 0 ? styles.summaryPillNegative : null]}
+              textStyle={styles.summaryLabel}
+            />
+            <StatusPill icon="heart-pulse" label={pulseLabel} style={styles.summaryPill} textStyle={styles.summaryLabel} />
+            <StatusPill
+              icon={getPulseTrendIconName(pulseTrend)}
+              label={getPulseTrendLabel(pulseTrend)}
+              style={styles.summaryPill}
+              textStyle={styles.summaryLabel}
+            />
           </View>
         </View>
         <View style={styles.topSummarySparkWrap}>
@@ -347,15 +464,9 @@ function InsightsTopSummaryCard({
         </Surface>
       </View>
       <View style={styles.summaryRow}>
-        <View style={styles.summaryPill}>
-          <Text style={styles.summaryLabel}>Private {privateCount}</Text>
-        </View>
-        <View style={styles.summaryPill}>
-          <Text style={styles.summaryLabel}>Later {laterCount}</Text>
-        </View>
-        <View style={styles.summaryPill}>
-          <Text style={styles.summaryLabel}>Shared {sharedCount}</Text>
-        </View>
+        <StatusPill icon="lock-outline" label={`Private ${privateCount}`} style={styles.summaryPill} textStyle={styles.summaryLabel} />
+        <StatusPill icon="clock-outline" label={`Later ${laterCount}`} style={styles.summaryPill} textStyle={styles.summaryLabel} />
+        <StatusPill icon="account-group-outline" label={`Shared ${sharedCount}`} style={styles.summaryPill} textStyle={styles.summaryLabel} />
       </View>
     </Surface>
   );
@@ -399,7 +510,7 @@ function ScoreLineChart({
       <View style={styles.chartHeaderRow}>
         <View style={styles.entryHeaderCopy}>
           <Text style={styles.chartTitle}>{title}</Text>
-          <Text style={styles.sectionMeta}>Are we improving or slipping in this window?</Text>
+          <Text style={styles.sectionMeta}>Are we improving or slipping?</Text>
         </View>
         <View style={styles.chartHeaderMetricWrap}>
           <Text style={styles.chartHeroValue}>{Math.round(currentValue)}</Text>
@@ -477,7 +588,7 @@ function ConnectionTensionLineChart({
       <View style={styles.chartHeaderRow}>
         <View style={styles.entryHeaderCopy}>
           <Text style={styles.chartTitle}>{title}</Text>
-          <Text style={styles.sectionMeta}>Are closeness and strain moving in the same direction?</Text>
+          <Text style={styles.sectionMeta}>How are closeness and strain moving?</Text>
         </View>
         <View style={styles.chartLegendRow}>
           <View style={styles.chartLegendItem}>
@@ -547,7 +658,7 @@ function StreakSparklineCard({
       <View style={styles.streakCardHeader}>
         <View style={styles.entryHeaderCopy}>
           <Text style={styles.chartTitle}>Check-in consistency</Text>
-          <Text style={styles.sectionMeta}>A lighter habit signal that supports the bigger story.</Text>
+          <Text style={styles.sectionMeta}>A lighter habit signal.</Text>
         </View>
         <View style={styles.streakValueWrap}>
           <Text style={styles.streakValue}>{currentStreak}d</Text>
@@ -663,9 +774,12 @@ function InsightCard({
             </Text>
             <Text style={styles.entryMeta}>{getVisibilityLabel(entry.visibility)}</Text>
           </View>
-          <View style={styles.visibilityPill}>
-            <Text style={styles.visibilityPillText}>{getVisibilityBadgeLabel(entry.visibility)}</Text>
-          </View>
+          <StatusPill
+            icon={getVisibilityBadgeIconName(entry.visibility)}
+            label={getVisibilityBadgeLabel(entry.visibility)}
+            style={styles.visibilityPill}
+            textStyle={styles.visibilityPillText}
+          />
         </View>
         {showAuthor ? <Text style={styles.entryAuthor}>From {entry.createdByEmail}</Text> : null}
         <View style={styles.metricsRow}>
@@ -1089,7 +1203,7 @@ export default function InsightsScreen() {
             Insights
           </Text>
           <Text style={styles.subheader}>
-            Check in with yourself, name the pulse between you, and choose whether this reflection stays private or becomes shared.
+            Check in, read the pulse, and decide what stays private versus shared.
           </Text>
           <InsightsTopSummaryCard
             score={displayScore}
@@ -1124,24 +1238,20 @@ export default function InsightsScreen() {
           <View onLayout={registerSection('pulse')}>
             <Card style={styles.archiveCard}>
               <Card.Content>
-                <View style={styles.sectionHeader}>
-                  <Text variant="titleMedium" style={styles.cardTitle}>
-                    Relationship pulse
-                </Text>
-                <Text style={styles.sectionMeta}>
-                  A blended read on shared reflections, tension, connection, and follow-through.
-                </Text>
-              </View>
+                <SectionHeading
+                  section="pulse"
+                  title="Relationship pulse"
+                  meta="Shared reflections, tension, connection, and follow-through in one read."
+                />
               <View style={styles.metricsRow}>
-                <View style={styles.metricPill}>
-                  <Text style={styles.metricLabel}>Pulse {displayPulseLabel}</Text>
-                </View>
-                <View style={styles.metricPill}>
-                  <Text style={styles.metricLabel}>Trend {getPulseTrendLabel(displayPulseTrend)}</Text>
-                </View>
-                <View style={styles.metricPill}>
-                  <Text style={styles.metricLabel}>Streak {displayStreak} days</Text>
-                </View>
+                <StatusPill icon="heart-pulse" label={displayPulseLabel} style={styles.metricPill} textStyle={styles.metricLabel} />
+                <StatusPill
+                  icon={getPulseTrendIconName(displayPulseTrend)}
+                  label={getPulseTrendLabel(displayPulseTrend)}
+                  style={styles.metricPill}
+                  textStyle={styles.metricLabel}
+                />
+                <StatusPill icon="calendar-check-outline" label={`${displayStreak} day streak`} style={styles.metricPill} textStyle={styles.metricLabel} />
               </View>
               <Text style={styles.archiveMeta}>{getPulseLabelCopy(displayPulseLabel)}</Text>
               <Surface
@@ -1191,14 +1301,11 @@ export default function InsightsScreen() {
           <View onLayout={registerSection('score')}>
             <Card style={styles.archiveCard}>
               <Card.Content>
-                <View style={styles.sectionHeader}>
-                  <Text variant="titleMedium" style={styles.cardTitle}>
-                    Connection Score
-                </Text>
-                <Text style={styles.sectionMeta}>
-                  Smarter weighting now factors recency, action difficulty, appreciation loops, reflection depth, emotional presence, and Love Note care.
-                </Text>
-              </View>
+                <SectionHeading
+                  section="score"
+                  title="Connection Score"
+                  meta="Weighted by recency, follow-through, reflection depth, emotional presence, and Love Note care."
+                />
               <Surface style={styles.segmentedWrap} elevation={0}>
                 <SegmentedButtons
                   value={scoreWindow}
@@ -1316,14 +1423,11 @@ export default function InsightsScreen() {
           <View onLayout={registerSection('trends')}>
             <Card style={styles.archiveCard}>
               <Card.Content>
-                <View style={styles.sectionHeader}>
-                  <Text variant="titleMedium" style={styles.cardTitle}>
-                    Trends over time
-                </Text>
-                <Text style={styles.sectionMeta}>
-                  Daily Firestore snapshots preserve score and pulse history so your progress is not only inferred from the current moment.
-                </Text>
-              </View>
+                <SectionHeading
+                  section="trends"
+                  title="Trends over time"
+                  meta="Daily snapshots show whether momentum is building or slipping."
+                />
               <View style={styles.chartStack}>
                 <ScoreLineChart
                   title="Score trend"
@@ -1349,14 +1453,11 @@ export default function InsightsScreen() {
           <View onLayout={registerSection('coaching')}>
             <Card style={styles.archiveCard}>
               <Card.Content>
-                <View style={styles.sectionHeader}>
-                  <Text variant="titleMedium" style={styles.cardTitle}>
-                    Coaching recommendations
-                </Text>
-                <Text style={styles.sectionMeta}>
-                  These suggestions respond to weak areas, low follow-through, elevated tension, and gaps in affection or shared reflection.
-                </Text>
-              </View>
+                <SectionHeading
+                  section="coaching"
+                  title="Coaching recommendations"
+                  meta="Suggestions based on weak areas, tension, follow-through, and shared visibility."
+                />
               <View style={styles.entryList}>
                 {scoreBreakdown.recommendations.length === 0 ? (
                   <Text style={styles.emptyCopy}>No urgent coaching prompts right now. Keep reinforcing what is already working.</Text>
@@ -1375,9 +1476,12 @@ export default function InsightsScreen() {
                               </Text>
                               <Text style={styles.entryMeta}>{recommendation.ctaLabel}</Text>
                             </View>
-                            <View style={styles.visibilityPill}>
-                              <Text style={styles.visibilityPillText}>{getRecommendationFocusLabel(recommendation.focus)}</Text>
-                            </View>
+                            <StatusPill
+                              icon={getRecommendationFocusIconName(recommendation.focus)}
+                              label={getRecommendationFocusLabel(recommendation.focus)}
+                              style={styles.visibilityPill}
+                              textStyle={styles.visibilityPillText}
+                            />
                           </View>
                           <Text style={styles.entryDetail}>{recommendation.body}</Text>
                           <Surface style={styles.coachingReasonCard} elevation={0}>
@@ -1513,14 +1617,11 @@ export default function InsightsScreen() {
           <View onLayout={registerSection('history')}>
             <Card style={styles.archiveCard}>
               <Card.Content>
-                <View style={styles.sectionHeader}>
-                  <Text variant="titleMedium" style={styles.cardTitle}>
-                    Relationship history
-                  </Text>
-                  <Text style={styles.sectionMeta}>
-                    A mixed timeline of Love Notes, shared reflections, completions, and appreciations.
-                  </Text>
-                </View>
+                <SectionHeading
+                  section="history"
+                  title="Relationship history"
+                  meta="A timeline of Love Notes, reflections, completions, and appreciations."
+                />
               <View style={styles.entryList}>
                 {historyFeed.length === 0 ? (
                   <Text style={styles.emptyCopy}>No recent history yet in this time window.</Text>
@@ -1535,9 +1636,12 @@ export default function InsightsScreen() {
                             </Text>
                             <Text style={styles.entryMeta}>{event.title}</Text>
                           </View>
-                          <View style={styles.visibilityPill}>
-                            <Text style={styles.visibilityPillText}>{event.badge}</Text>
-                          </View>
+                          <StatusPill
+                            icon={getHistoryBadgeIconName(event.badge)}
+                            label={event.badge}
+                            style={styles.visibilityPill}
+                            textStyle={styles.visibilityPillText}
+                          />
                         </View>
                         <Text style={styles.entryDetail}>{event.body}</Text>
                       </Card.Content>
@@ -1550,27 +1654,31 @@ export default function InsightsScreen() {
           </View>
           <View onLayout={registerSection('checkin')}>
             <Surface style={styles.hero} elevation={0}>
-              <Text variant="titleMedium" style={styles.heroTitle}>
-                Daily check-in + relationship pulse
-              </Text>
-              <Text style={styles.heroBody}>
-                Capture how you feel, how connected you feel, where tension is sitting, what you appreciated, what you need, and what move helps next.
-              </Text>
+              <View style={styles.heroHeaderRow}>
+                <View style={styles.sectionIconWrap}>
+                  <MaterialDesignIcons name={getSectionIconName('checkin') as any} size={18} color="#B25B63" />
+                </View>
+                <View style={styles.sectionHeaderCopy}>
+                  <Text variant="titleMedium" style={styles.heroTitle}>
+                    Daily check-in + relationship pulse
+                  </Text>
+                  <Text style={styles.heroBody}>Capture the moment, the need, and the next move.</Text>
+                </View>
+              </View>
             </Surface>
             <Card style={styles.card}>
               <Card.Content style={styles.cardContent}>
-              <View style={styles.sectionHeader}>
-                <Text variant="titleMedium" style={styles.cardTitle}>
-                  {editingContext ? 'Edit this reflection' : 'Save this reflection as'}
-                </Text>
-                <Text style={styles.sectionMeta}>
-                  {editingContext
+              <SectionHeading
+                section="saved"
+                title={editingContext ? 'Edit this reflection' : 'Save this reflection as'}
+                meta={
+                  editingContext
                     ? editingContext.source === 'shared'
-                      ? 'You are editing a shared insight that your partner can see'
-                      : 'You are editing a saved reflection in your personal archive'
-                    : 'Choose the privacy level first'}
-                </Text>
-              </View>
+                      ? 'Editing a shared insight your partner can see.'
+                      : 'Editing a reflection from your private archive.'
+                    : 'Choose the privacy level first.'
+                }
+              />
               {editingContext ? (
                 <Surface style={styles.editBanner} elevation={0}>
                   <Text style={styles.editBannerTitle}>
@@ -1596,16 +1704,16 @@ export default function InsightsScreen() {
               </Surface>
               <HelperText type="info" visible>
                 {visibility === 'shared'
-                  ? 'This entry will sync into the shared relationship space.'
+                  ? 'Shared with your partner.'
                   : visibility === 'decideLater'
-                    ? 'This saves to your private archive until you decide whether to share it.'
-                    : 'This stays synced only to your account.'}
+                    ? 'Saved privately until you decide.'
+                    : 'Private to your account only.'}
               </HelperText>
               <View style={styles.sectionHeader}>
                 <Text variant="titleMedium" style={styles.cardTitle}>
                   Pulse check
                 </Text>
-                <Text style={styles.sectionMeta}>Use the scale to name the temperature of today</Text>
+                <Text style={styles.sectionMeta}>Name the temperature of today.</Text>
               </View>
               <View style={styles.ratingStack}>
                 <RatingField label="How do you feel right now?" value={mood} onChange={setMood} hints={MOOD_HINTS} />
@@ -1621,7 +1729,7 @@ export default function InsightsScreen() {
                 <Text variant="titleMedium" style={styles.cardTitle}>
                   Words for today
                 </Text>
-                <Text style={styles.sectionMeta}>Write as little or as much as you need</Text>
+                <Text style={styles.sectionMeta}>Write as little or as much as you need.</Text>
               </View>
               <TextInput
                 mode="outlined"
@@ -1712,12 +1820,11 @@ export default function InsightsScreen() {
           <View onLayout={registerSection('saved')}>
             <Card style={styles.archiveCard}>
               <Card.Content>
-                <View style={styles.sectionHeader}>
-                  <Text variant="titleMedium" style={styles.cardTitle}>
-                    Saved reflections
-                  </Text>
-                  <Text style={styles.sectionMeta}>Filter your archive by privacy state</Text>
-                </View>
+                <SectionHeading
+                  section="saved"
+                  title="Saved reflections"
+                  meta="Filter your archive by privacy state."
+                />
               <Surface style={styles.segmentedWrap} elevation={0}>
                 <SegmentedButtons
                   value={archiveFilter}
@@ -1949,6 +2056,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#F2D3C7',
   },
+  iconPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   summaryPillPositive: {
     backgroundColor: '#EEF6EA',
     borderColor: '#CFE1C8',
@@ -1960,6 +2072,11 @@ const styles = StyleSheet.create({
   summaryLabel: {
     color: '#7C5964',
     fontSize: 11,
+    fontWeight: '700',
+  },
+  iconPillText: {
+    color: '#7C5964',
+    fontSize: 12,
     fontWeight: '700',
   },
   sparklinePlaceholder: {
@@ -1994,6 +2111,11 @@ const styles = StyleSheet.create({
     gap: 6,
     backgroundColor: '#F6D3C7',
   },
+  heroHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
   heroTitle: {
     color: '#3F2831',
     fontWeight: '700',
@@ -2014,6 +2136,25 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   sectionHeader: {
+    gap: 2,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  sectionIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FCE9E1',
+    borderWidth: 1,
+    borderColor: '#F0D0C0',
+  },
+  sectionHeaderCopy: {
+    flex: 1,
     gap: 2,
   },
   sectionMeta: {
