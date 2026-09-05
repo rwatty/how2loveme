@@ -1,9 +1,11 @@
-import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import React, { useMemo, useRef, useState } from 'react';
+import { type LayoutChangeEvent, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth } from '@react-native-firebase/auth';
+import Svg, { Circle, Defs, Line, LinearGradient, Path, Stop } from 'react-native-svg';
+import JumpToSectionFab, { type JumpSection } from '../components/JumpToSectionFab';
 import {
   Button,
   Card,
@@ -22,6 +24,9 @@ import {
   buildMetricChartPoints,
   buildPulseSummary,
   buildScoreBreakdown,
+  buildScoreChangeSummary,
+  buildTrendInterpretation,
+  getCoachingSuggestionLabel,
   getMetricsWindowStart,
   type CoachingRecommendation,
   type MetricsWindow,
@@ -111,6 +116,31 @@ function getPulseTrendLabel(trend: PulseTrend) {
   }
 }
 
+function getRecommendationFocusLabel(focus: CoachingRecommendation['focus']) {
+  switch (focus) {
+    case 'loveActions':
+      return 'Love Action';
+    case 'loveNotes':
+      return 'Love Note';
+    default:
+      return 'Insight';
+  }
+}
+
+function formatSignedValue(value: number, suffix = '') {
+  const rounded = Math.round(value * 10) / 10;
+
+  if (rounded > 0) {
+    return `+${rounded}${suffix}`;
+  }
+
+  if (rounded < 0) {
+    return `${rounded}${suffix}`;
+  }
+
+  return `0${suffix}`;
+}
+
 function formatLoveActionMetricDate(timestamp: number | null) {
   if (!timestamp) {
     return 'No date yet';
@@ -133,19 +163,221 @@ function getWindowLabel(window: MetricsWindow) {
   }
 }
 
-function MetricTrendChart({
+type TrendPoint = {
+  id: string;
+  label: string;
+  score: number;
+  connection: number;
+  tension: number;
+  streak: number;
+};
+
+type RenderPoint = {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  value: number;
+};
+
+const CHART_VIEWBOX_WIDTH = 320;
+const CHART_VIEWBOX_HEIGHT = 132;
+const CHART_PADDING_X = 18;
+const CHART_PADDING_TOP = 16;
+const CHART_PADDING_BOTTOM = 26;
+const SPARKLINE_WIDTH = 120;
+const SPARKLINE_HEIGHT = 44;
+const SPARKLINE_PADDING_X = 6;
+const SPARKLINE_PADDING_Y = 8;
+
+function buildRenderPoints(points: TrendPoint[], values: number[], maxValue: number, options?: {
+  width?: number;
+  height?: number;
+  paddingX?: number;
+  paddingTop?: number;
+  paddingBottom?: number;
+}) {
+  const width = options?.width ?? CHART_VIEWBOX_WIDTH;
+  const height = options?.height ?? CHART_VIEWBOX_HEIGHT;
+  const paddingX = options?.paddingX ?? CHART_PADDING_X;
+  const paddingTop = options?.paddingTop ?? CHART_PADDING_TOP;
+  const paddingBottom = options?.paddingBottom ?? CHART_PADDING_BOTTOM;
+  const usableWidth = width - paddingX * 2;
+  const usableHeight = height - paddingTop - paddingBottom;
+  const safeMaxValue = Math.max(1, maxValue);
+
+  return points.map((point, index) => {
+    const x = points.length === 1 ? width / 2 : paddingX + (usableWidth * index) / Math.max(1, points.length - 1);
+    const normalized = Math.max(0, Math.min(1, values[index] / safeMaxValue));
+    const y = paddingTop + (1 - normalized) * usableHeight;
+
+    return {
+      id: point.id,
+      label: point.label,
+      x,
+      y,
+      value: values[index],
+    } satisfies RenderPoint;
+  });
+}
+
+function buildLinePath(points: RenderPoint[]) {
+  if (points.length === 0) {
+    return '';
+  }
+
+  return points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
+}
+
+function buildAreaPath(points: RenderPoint[], height: number, bottomPadding: number) {
+  if (points.length === 0) {
+    return '';
+  }
+
+  const floorY = height - bottomPadding;
+  return [
+    `M ${points[0]?.x ?? 0} ${floorY}`,
+    ...points.map(point => `L ${point.x} ${point.y}`),
+    `L ${points[points.length - 1]?.x ?? 0} ${floorY}`,
+    'Z',
+  ].join(' ');
+}
+
+function TrendSparkline({
+  points,
+  metric,
+  color,
+}: {
+  points: TrendPoint[];
+  metric: 'score' | 'streak';
+  color: string;
+}) {
+  if (points.length === 0) {
+    return <View style={styles.sparklinePlaceholder} />;
+  }
+
+  const values = points.map(point => (metric === 'score' ? point.score : point.streak));
+  const renderPoints = buildRenderPoints(points, values, Math.max(...values, 1), {
+    width: SPARKLINE_WIDTH,
+    height: SPARKLINE_HEIGHT,
+    paddingX: SPARKLINE_PADDING_X,
+    paddingTop: SPARKLINE_PADDING_Y,
+    paddingBottom: SPARKLINE_PADDING_Y,
+  });
+
+  return (
+    <Svg width={SPARKLINE_WIDTH} height={SPARKLINE_HEIGHT} viewBox={`0 0 ${SPARKLINE_WIDTH} ${SPARKLINE_HEIGHT}`}>
+      <Path d={buildLinePath(renderPoints)} stroke={color} strokeWidth={2.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      {renderPoints.map((point, index) => (
+        <Circle
+          key={`${metric}-spark-${point.id}`}
+          cx={point.x}
+          cy={point.y}
+          r={index === renderPoints.length - 1 ? 3.4 : 2.4}
+          fill={index === renderPoints.length - 1 ? '#FFF7F2' : color}
+          stroke={color}
+          strokeWidth={index === renderPoints.length - 1 ? 2 : 0}
+        />
+      ))}
+    </Svg>
+  );
+}
+
+function InsightsTopSummaryCard({
+  score,
+  delta,
+  pulseLabel,
+  pulseTrend,
+  streak,
+  weakestArea,
+  connected,
+  chartPoints,
+  privateCount,
+  laterCount,
+  sharedCount,
+}: {
+  score: number;
+  delta: number;
+  pulseLabel: PulseLabel;
+  pulseTrend: PulseTrend;
+  streak: number;
+  weakestArea: string | null;
+  connected: boolean;
+  chartPoints: TrendPoint[];
+  privateCount: number;
+  laterCount: number;
+  sharedCount: number;
+}) {
+  return (
+    <Surface style={styles.topSummaryCard} elevation={0}>
+      <View style={styles.topSummaryHeader}>
+        <View style={styles.topSummaryPrimary}>
+          <Text style={styles.topSummaryEyebrow}>Relationship pulse</Text>
+          <Text style={styles.topSummaryScore}>{Math.round(score)}</Text>
+          <Text style={styles.topSummaryScoreMeta}>Connection Score</Text>
+          <View style={styles.summaryRow}>
+            <View style={[styles.summaryPill, delta > 0 ? styles.summaryPillPositive : delta < 0 ? styles.summaryPillNegative : null]}>
+              <Text style={styles.summaryLabel}>{formatSignedValue(delta, ' pts')}</Text>
+            </View>
+            <View style={styles.summaryPill}>
+              <Text style={styles.summaryLabel}>Pulse {pulseLabel}</Text>
+            </View>
+            <View style={styles.summaryPill}>
+              <Text style={styles.summaryLabel}>{getPulseTrendLabel(pulseTrend)}</Text>
+            </View>
+          </View>
+        </View>
+        <View style={styles.topSummarySparkWrap}>
+          <TrendSparkline points={chartPoints} metric="score" color="#B25B63" />
+          <Text style={styles.sparklineMeta}>Recent score</Text>
+        </View>
+      </View>
+      <View style={styles.topSummaryGrid}>
+        <Surface style={styles.topSummaryStatCard} elevation={0}>
+          <Text style={styles.topSummaryStatValue}>{streak}d</Text>
+          <Text style={styles.topSummaryStatLabel}>Check-in streak</Text>
+        </Surface>
+        <Surface style={styles.topSummaryStatCard} elevation={0}>
+          <Text style={styles.topSummaryStatValue}>{connected ? 'Connected' : 'Solo'}</Text>
+          <Text style={styles.topSummaryStatLabel}>Relationship mode</Text>
+        </Surface>
+        <Surface style={styles.topSummaryStatCard} elevation={0}>
+          <Text style={styles.topSummaryStatValue}>{weakestArea ?? 'Balanced'}</Text>
+          <Text style={styles.topSummaryStatLabel}>Area needing care</Text>
+        </Surface>
+      </View>
+      <View style={styles.summaryRow}>
+        <View style={styles.summaryPill}>
+          <Text style={styles.summaryLabel}>Private {privateCount}</Text>
+        </View>
+        <View style={styles.summaryPill}>
+          <Text style={styles.summaryLabel}>Later {laterCount}</Text>
+        </View>
+        <View style={styles.summaryPill}>
+          <Text style={styles.summaryLabel}>Shared {sharedCount}</Text>
+        </View>
+      </View>
+    </Surface>
+  );
+}
+
+function ScoreLineChart({
   title,
   points,
   color,
   maxValue,
-  metric,
+  currentValue,
+  delta,
+  supportingText,
   emptyCopy,
 }: {
   title: string;
-  points: Array<{ id: string; label: string; score: number; connection: number; tension: number; streak: number }>;
+  points: TrendPoint[];
   color: string;
   maxValue: number;
-  metric: 'score' | 'connection' | 'tension' | 'streak';
+  currentValue: number;
+  delta: number;
+  supportingText: string;
   emptyCopy: string;
 }) {
   if (points.length === 0) {
@@ -157,41 +389,74 @@ function MetricTrendChart({
     );
   }
 
+  const values = points.map(point => point.score);
+  const renderPoints = buildRenderPoints(points, values, maxValue);
+  const linePath = buildLinePath(renderPoints);
+  const areaPath = buildAreaPath(renderPoints, CHART_VIEWBOX_HEIGHT, CHART_PADDING_BOTTOM);
+
   return (
     <Surface style={styles.chartCard} elevation={0}>
-      <Text style={styles.chartTitle}>{title}</Text>
-      <View style={styles.chartRow}>
-        {points.map(point => {
-          const value = metric === 'score'
-            ? point.score
-            : metric === 'connection'
-              ? point.connection
-              : metric === 'tension'
-                ? point.tension
-                : point.streak;
-          const height = Math.max(10, (Math.max(0, value) / maxValue) * 88);
-
-          return (
-            <View key={`${metric}-${point.id}`} style={styles.chartColumn}>
-              <Text style={styles.chartValue}>{metric === 'score' || metric === 'streak' ? Math.round(value) : value.toFixed(1)}</Text>
-              <View style={styles.chartTrack}>
-                <View style={[styles.chartBar, { height, backgroundColor: color }]} />
-              </View>
-              <Text style={styles.chartLabel}>{point.label}</Text>
-            </View>
-          );
-        })}
+      <View style={styles.chartHeaderRow}>
+        <View style={styles.entryHeaderCopy}>
+          <Text style={styles.chartTitle}>{title}</Text>
+          <Text style={styles.sectionMeta}>Are we improving or slipping in this window?</Text>
+        </View>
+        <View style={styles.chartHeaderMetricWrap}>
+          <Text style={styles.chartHeroValue}>{Math.round(currentValue)}</Text>
+          <View style={[styles.summaryPill, delta > 0 ? styles.summaryPillPositive : delta < 0 ? styles.summaryPillNegative : null]}>
+            <Text style={styles.summaryLabel}>{formatSignedValue(delta, ' pts')}</Text>
+          </View>
+        </View>
       </View>
+      <View style={styles.lineChartFrame}>
+        <Svg width="100%" height={CHART_VIEWBOX_HEIGHT} viewBox={`0 0 ${CHART_VIEWBOX_WIDTH} ${CHART_VIEWBOX_HEIGHT}`}>
+          <Defs>
+            <LinearGradient id="scoreArea" x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0" stopColor="#D79395" stopOpacity="0.32" />
+              <Stop offset="1" stopColor="#D79395" stopOpacity="0.03" />
+            </LinearGradient>
+          </Defs>
+          {[0.25, 0.5, 0.75].map(step => {
+            const y = CHART_PADDING_TOP + (CHART_VIEWBOX_HEIGHT - CHART_PADDING_TOP - CHART_PADDING_BOTTOM) * step;
+            return <Line key={`grid-${step}`} x1={CHART_PADDING_X} x2={CHART_VIEWBOX_WIDTH - CHART_PADDING_X} y1={y} y2={y} stroke="#F0DED4" strokeWidth={1} />;
+          })}
+          <Path d={areaPath} fill="url(#scoreArea)" />
+          <Path d={linePath} stroke={color} strokeWidth={3} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          {renderPoints.map((point, index) => (
+            <Circle
+              key={`score-point-${point.id}`}
+              cx={point.x}
+              cy={point.y}
+              r={index === renderPoints.length - 1 ? 5 : 3.2}
+              fill={index === renderPoints.length - 1 ? '#FFF7F2' : color}
+              stroke={color}
+              strokeWidth={index === renderPoints.length - 1 ? 2.4 : 0}
+            />
+          ))}
+        </Svg>
+      </View>
+      <View style={styles.chartAxisRow}>
+        {points.map((point, index) => (
+          <Text key={`score-label-${point.id}`} style={styles.chartAxisLabel}>
+            {index === 0 || index === points.length - 1 || index % 2 === 0 ? point.label : ' '}
+          </Text>
+        ))}
+      </View>
+      <Text style={styles.entryDetail}>{supportingText}</Text>
     </Surface>
   );
 }
 
-function DualMetricTrendChart({
+function ConnectionTensionLineChart({
   title,
   points,
+  headline,
+  body,
 }: {
   title: string;
-  points: Array<{ id: string; label: string; score: number; connection: number; tension: number; streak: number }>;
+  points: TrendPoint[];
+  headline: string;
+  body: string;
 }) {
   if (points.length === 0) {
     return (
@@ -202,39 +467,99 @@ function DualMetricTrendChart({
     );
   }
 
+  const connectionValues = points.map(point => point.connection);
+  const tensionValues = points.map(point => point.tension);
+  const connectionPoints = buildRenderPoints(points, connectionValues, 5);
+  const tensionPoints = buildRenderPoints(points, tensionValues, 5);
+
   return (
     <Surface style={styles.chartCard} elevation={0}>
-      <Text style={styles.chartTitle}>{title}</Text>
-      <View style={styles.chartLegendRow}>
-        <View style={styles.chartLegendItem}>
-          <View style={[styles.chartLegendDot, { backgroundColor: '#B25B63' }]} />
-          <Text style={styles.chartLegendLabel}>Connection</Text>
+      <View style={styles.chartHeaderRow}>
+        <View style={styles.entryHeaderCopy}>
+          <Text style={styles.chartTitle}>{title}</Text>
+          <Text style={styles.sectionMeta}>Are closeness and strain moving in the same direction?</Text>
         </View>
-        <View style={styles.chartLegendItem}>
-          <View style={[styles.chartLegendDot, { backgroundColor: '#7D8AB8' }]} />
-          <Text style={styles.chartLegendLabel}>Tension</Text>
+        <View style={styles.chartLegendRow}>
+          <View style={styles.chartLegendItem}>
+            <View style={[styles.chartLegendDot, { backgroundColor: '#B25B63' }]} />
+            <Text style={styles.chartLegendLabel}>Connection</Text>
+          </View>
+          <View style={styles.chartLegendItem}>
+            <View style={[styles.chartLegendDot, { backgroundColor: '#7D8AB8' }]} />
+            <Text style={styles.chartLegendLabel}>Tension</Text>
+          </View>
         </View>
       </View>
-      <View style={styles.chartRow}>
-        {points.map(point => {
-          const connectionHeight = Math.max(8, (point.connection / 5) * 84);
-          const tensionHeight = Math.max(8, (point.tension / 5) * 84);
+      <View style={styles.lineChartFrame}>
+        <Svg width="100%" height={CHART_VIEWBOX_HEIGHT} viewBox={`0 0 ${CHART_VIEWBOX_WIDTH} ${CHART_VIEWBOX_HEIGHT}`}>
+          {[1, 2, 3, 4].map(level => {
+            const y = CHART_PADDING_TOP + ((CHART_VIEWBOX_HEIGHT - CHART_PADDING_TOP - CHART_PADDING_BOTTOM) * level) / 5;
+            return <Line key={`dual-grid-${level}`} x1={CHART_PADDING_X} x2={CHART_VIEWBOX_WIDTH - CHART_PADDING_X} y1={y} y2={y} stroke="#F0DED4" strokeWidth={1} />;
+          })}
+          <Path d={buildLinePath(connectionPoints)} stroke="#B25B63" strokeWidth={3} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          <Path d={buildLinePath(tensionPoints)} stroke="#7D8AB8" strokeWidth={3} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          {connectionPoints.map((point, index) => (
+            <Circle
+              key={`connection-point-${point.id}`}
+              cx={point.x}
+              cy={point.y}
+              r={index === connectionPoints.length - 1 ? 4.5 : 3}
+              fill={index === connectionPoints.length - 1 ? '#FFF7F2' : '#B25B63'}
+              stroke="#B25B63"
+              strokeWidth={index === connectionPoints.length - 1 ? 2 : 0}
+            />
+          ))}
+          {tensionPoints.map((point, index) => (
+            <Circle
+              key={`tension-point-${point.id}`}
+              cx={point.x}
+              cy={point.y}
+              r={index === tensionPoints.length - 1 ? 4.5 : 3}
+              fill={index === tensionPoints.length - 1 ? '#FFF7F2' : '#7D8AB8'}
+              stroke="#7D8AB8"
+              strokeWidth={index === tensionPoints.length - 1 ? 2 : 0}
+            />
+          ))}
+        </Svg>
+      </View>
+      <View style={styles.chartAxisRow}>
+        {points.map((point, index) => (
+          <Text key={`dual-label-${point.id}`} style={styles.chartAxisLabel}>
+            {index === 0 || index === points.length - 1 || index % 2 === 0 ? point.label : ' '}
+          </Text>
+        ))}
+      </View>
+      <Text style={styles.entryPreview}>{headline}</Text>
+      <Text style={styles.entryDetail}>{body}</Text>
+    </Surface>
+  );
+}
 
-          return (
-            <View key={`dual-${point.id}`} style={styles.chartColumn}>
-              <View style={styles.dualMetricHeader}>
-                <Text style={styles.chartMicroValue}>{point.connection.toFixed(1)}</Text>
-                <Text style={styles.chartMicroValue}>{point.tension.toFixed(1)}</Text>
-              </View>
-              <View style={styles.dualChartTrack}>
-                <View style={[styles.dualChartBar, { height: connectionHeight, backgroundColor: '#B25B63' }]} />
-                <View style={[styles.dualChartBar, { height: tensionHeight, backgroundColor: '#7D8AB8' }]} />
-              </View>
-              <Text style={styles.chartLabel}>{point.label}</Text>
-            </View>
-          );
-        })}
+function StreakSparklineCard({
+  points,
+  currentStreak,
+}: {
+  points: TrendPoint[];
+  currentStreak: number;
+}) {
+  return (
+    <Surface style={styles.streakCard} elevation={0}>
+      <View style={styles.streakCardHeader}>
+        <View style={styles.entryHeaderCopy}>
+          <Text style={styles.chartTitle}>Check-in consistency</Text>
+          <Text style={styles.sectionMeta}>A lighter habit signal that supports the bigger story.</Text>
+        </View>
+        <View style={styles.streakValueWrap}>
+          <Text style={styles.streakValue}>{currentStreak}d</Text>
+          <Text style={styles.streakValueLabel}>streak</Text>
+        </View>
       </View>
+      <TrendSparkline points={points} metric="streak" color="#D79395" />
+      <Text style={styles.entryDetail}>
+        {currentStreak > 0
+          ? `You have checked in ${currentStreak} day${currentStreak === 1 ? '' : 's'} in a row.`
+          : 'A few consecutive check-ins will make this rhythm easier to trust.'}
+      </Text>
     </Surface>
   );
 }
@@ -242,6 +567,15 @@ function DualMetricTrendChart({
 const MOOD_HINTS = ['Heavy', 'Tender', 'Steady', 'Open', 'Lit up'];
 const CONNECTION_HINTS = ['Distant', 'Off', 'Okay', 'Close', 'Deeply connected'];
 const TENSION_HINTS = ['Calm', 'Gentle', 'Present', 'Strained', 'High tension'];
+const INSIGHTS_JUMP_SECTIONS: JumpSection[] = [
+  { key: 'pulse', label: 'Relationship Pulse' },
+  { key: 'score', label: 'Connection Score' },
+  { key: 'trends', label: 'Trend Charts' },
+  { key: 'coaching', label: 'Coaching' },
+  { key: 'history', label: 'History' },
+  { key: 'checkin', label: 'Daily Check-In' },
+  { key: 'saved', label: 'Saved Reflections' },
+];
 
 type ArchiveFilter = 'private' | 'decideLater' | 'shared';
 
@@ -417,6 +751,8 @@ export default function InsightsScreen() {
   const [sharingEntryId, setSharingEntryId] = useState<string | null>(null);
   const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState('');
+  const [sectionOffsets, setSectionOffsets] = useState<Record<string, number>>({});
+  const scrollViewRef = useRef<any>(null);
 
   const writtenCount = useMemo(
     () => [appreciation, need, reflection, nextStep].filter(value => value.trim().length > 0).length,
@@ -494,13 +830,38 @@ export default function InsightsScreen() {
     [scoreBreakdown.completedActions],
   );
   const selectedWindowSnapshots = useMemo(
-    () => metricSnapshots.filter(snapshot => snapshot.window === scoreWindow),
+    () =>
+      metricSnapshots
+        .filter(snapshot => snapshot.window === scoreWindow)
+        .slice()
+        .sort((left, right) => left.capturedDate - right.capturedDate),
     [metricSnapshots, scoreWindow],
   );
   const latestSnapshot = selectedWindowSnapshots.at(-1) ?? null;
+  const previousSnapshot = selectedWindowSnapshots.at(-2) ?? null;
   const chartPoints = useMemo(
     () => buildMetricChartPoints(metricSnapshots, scoreWindow),
     [metricSnapshots, scoreWindow],
+  );
+  const trendInterpretation = useMemo(
+    () =>
+      buildTrendInterpretation({
+        window: scoreWindow,
+        pulseSummary,
+        scoreBreakdown,
+        latestSnapshot,
+        previousSnapshot,
+      }),
+    [latestSnapshot, previousSnapshot, pulseSummary, scoreBreakdown, scoreWindow],
+  );
+  const scoreChangeSummary = useMemo(
+    () =>
+      buildScoreChangeSummary({
+        scoreBreakdown,
+        latestSnapshot,
+        previousSnapshot,
+      }),
+    [latestSnapshot, previousSnapshot, scoreBreakdown],
   );
   const displayScore = latestSnapshot?.score ?? scoreBreakdown.score;
   const displayPulseLabel = latestSnapshot?.pulseLabel ?? pulseSummary.label;
@@ -511,6 +872,21 @@ export default function InsightsScreen() {
   const displayStreak = latestSnapshot?.checkInStreakDays ?? pulseSummary.checkInStreakDays;
   const loadingCopy = !hydrated || relationshipSyncing || syncingPrivate || syncingShared || (profile?.coupleId && syncingSnapshots);
   const canSubmit = hydrated && writtenCount > 0 && !saving;
+
+  const registerSection = (key: string) => ({ nativeEvent: { layout } }: LayoutChangeEvent) => {
+    const nextY = layout.y;
+    setSectionOffsets(current => (current[key] === nextY ? current : { ...current, [key]: nextY }));
+  };
+
+  const visibleJumpSections = INSIGHTS_JUMP_SECTIONS.filter(section => sectionOffsets[section.key] !== undefined);
+
+  const handleJumpToSection = (key: string) => {
+    const targetY = sectionOffsets[key];
+
+    if (typeof targetY === 'number') {
+      scrollViewRef.current?.scrollTo({ y: Math.max(0, targetY - 12), animated: true });
+    }
+  };
 
   const resetForm = () => {
     setMood(3);
@@ -704,6 +1080,7 @@ export default function InsightsScreen() {
     <>
       <SafeAreaView style={styles.screen} edges={['top']}>
         <ScrollView
+          ref={scrollViewRef}
           contentInsetAdjustmentBehavior="never"
           style={styles.scrollView}
           contentContainerStyle={styles.content}
@@ -714,29 +1091,19 @@ export default function InsightsScreen() {
           <Text style={styles.subheader}>
             Check in with yourself, name the pulse between you, and choose whether this reflection stays private or becomes shared.
           </Text>
-          <View style={styles.summaryRow}>
-            <View style={styles.summaryPill}>
-              <Text style={styles.summaryLabel}>Private {privateOnlyEntries.length}</Text>
-            </View>
-            <View style={styles.summaryPill}>
-              <Text style={styles.summaryLabel}>Later {laterEntries.length}</Text>
-            </View>
-            <View style={styles.summaryPill}>
-              <Text style={styles.summaryLabel}>Shared {sharedEntries.length}</Text>
-            </View>
-            <View style={styles.summaryPill}>
-              <Text style={styles.summaryLabel}>Pulse {displayPulseLabel}</Text>
-            </View>
-            <View style={styles.summaryPill}>
-              <Text style={styles.summaryLabel}>Score {Math.round(displayScore)}</Text>
-            </View>
-            <View style={styles.summaryPill}>
-              <Text style={styles.summaryLabel}>Streak {displayStreak}d</Text>
-            </View>
-            <View style={styles.summaryPill}>
-              <Text style={styles.summaryLabel}>{profile?.coupleId ? 'Connected' : 'Solo'}</Text>
-            </View>
-          </View>
+          <InsightsTopSummaryCard
+            score={displayScore}
+            delta={scoreChangeSummary.delta}
+            pulseLabel={displayPulseLabel}
+            pulseTrend={displayPulseTrend}
+            streak={displayStreak}
+            weakestArea={scoreBreakdown.weakestArea ? LOVE_AREA_LABELS[scoreBreakdown.weakestArea] : null}
+            connected={!!profile?.coupleId}
+            chartPoints={chartPoints}
+            privateCount={privateOnlyEntries.length}
+            laterCount={laterEntries.length}
+            sharedCount={sharedEntries.length}
+          />
           {loadingCopy ? <Text style={styles.syncText}>Syncing your reflection space...</Text> : null}
           {!!relationshipError ? <Text style={styles.errorText}>{relationshipError}</Text> : null}
           {!profile?.coupleId ? (
@@ -754,11 +1121,12 @@ export default function InsightsScreen() {
               </Card.Content>
             </Card>
           ) : null}
-          <Card style={styles.archiveCard}>
-            <Card.Content>
-              <View style={styles.sectionHeader}>
-                <Text variant="titleMedium" style={styles.cardTitle}>
-                  Relationship pulse
+          <View onLayout={registerSection('pulse')}>
+            <Card style={styles.archiveCard}>
+              <Card.Content>
+                <View style={styles.sectionHeader}>
+                  <Text variant="titleMedium" style={styles.cardTitle}>
+                    Relationship pulse
                 </Text>
                 <Text style={styles.sectionMeta}>
                   A blended read on shared reflections, tension, connection, and follow-through.
@@ -776,6 +1144,29 @@ export default function InsightsScreen() {
                 </View>
               </View>
               <Text style={styles.archiveMeta}>{getPulseLabelCopy(displayPulseLabel)}</Text>
+              <Surface
+                style={[
+                  styles.explanationCard,
+                  trendInterpretation.tone === 'growing'
+                    ? styles.explanationCardPositive
+                    : trendInterpretation.tone === 'caution'
+                      ? styles.explanationCardNegative
+                      : null,
+                ]}
+                elevation={0}
+              >
+                <Text variant="titleSmall" style={styles.entryDate}>
+                  {trendInterpretation.headline}
+                </Text>
+                <Text style={styles.entryDetail}>{trendInterpretation.body}</Text>
+                <View style={styles.metricsRow}>
+                  {trendInterpretation.supportPills.map(signal => (
+                    <View key={signal} style={styles.metricPill}>
+                      <Text style={styles.metricLabel}>{signal}</Text>
+                    </View>
+                  ))}
+                </View>
+              </Surface>
               <View style={styles.metricsRow}>
                 <View style={styles.metricPill}>
                   <Text style={styles.metricLabel}>Mood {displayAverageMood || 0}/5</Text>
@@ -794,13 +1185,15 @@ export default function InsightsScreen() {
                     ? 'No recent shared reflections are feeding the pulse yet. Save or share a check-in below to start building your history.'
                     : `${pulseSummary.recentReflectionCount} recent reflections and ${scoreBreakdown.measuredNotes.length} Love Notes are informing this live pulse.`}
               </Text>
-            </Card.Content>
-          </Card>
-          <Card style={styles.archiveCard}>
-            <Card.Content>
-              <View style={styles.sectionHeader}>
-                <Text variant="titleMedium" style={styles.cardTitle}>
-                  Connection Score
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('score')}>
+            <Card style={styles.archiveCard}>
+              <Card.Content>
+                <View style={styles.sectionHeader}>
+                  <Text variant="titleMedium" style={styles.cardTitle}>
+                    Connection Score
                 </Text>
                 <Text style={styles.sectionMeta}>
                   Smarter weighting now factors recency, action difficulty, appreciation loops, reflection depth, emotional presence, and Love Note care.
@@ -857,6 +1250,51 @@ export default function InsightsScreen() {
                   ? `No shared signals are feeding this ${getWindowLabel(scoreWindow)} score yet.`
                   : `${scoreBreakdown.measuredActions.length} Love Actions, ${scoreBreakdown.measuredInsights.length} reflections, and ${scoreBreakdown.measuredNotes.length} Love Notes are shaping this ${getWindowLabel(scoreWindow)} score.`}
               </Text>
+              <Surface style={styles.explanationCard} elevation={0}>
+                <View style={styles.scoreComponentHeader}>
+                  <Text variant="titleSmall" style={styles.entryDate}>
+                    Why this changed
+                  </Text>
+                  <View
+                    style={[
+                      styles.visibilityPill,
+                      scoreChangeSummary.direction === 'up'
+                        ? styles.visibilityPillPositive
+                        : scoreChangeSummary.direction === 'down'
+                          ? styles.visibilityPillNegative
+                          : null,
+                    ]}
+                  >
+                    <Text style={styles.visibilityPillText}>{formatSignedValue(scoreChangeSummary.delta, ' pts')}</Text>
+                  </View>
+                </View>
+                <Text style={styles.entryPreview}>{scoreChangeSummary.headline}</Text>
+                <Text style={styles.entryDetail}>{scoreChangeSummary.body}</Text>
+                <View style={styles.driverList}>
+                  {scoreChangeSummary.drivers.map(driver => (
+                    <Surface key={driver.id} style={styles.driverCard} elevation={0}>
+                      <View style={styles.scoreComponentHeader}>
+                        <Text variant="titleSmall" style={styles.entryDate}>
+                          {driver.label}
+                        </Text>
+                        <View
+                          style={[
+                            styles.visibilityPill,
+                            driver.direction === 'up'
+                              ? styles.visibilityPillPositive
+                              : driver.direction === 'down'
+                                ? styles.visibilityPillNegative
+                                : null,
+                          ]}
+                        >
+                          <Text style={styles.visibilityPillText}>{formatSignedValue(driver.scoreImpact, ' pts')}</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.entryDetail}>{driver.summary}</Text>
+                    </Surface>
+                  ))}
+                </View>
+              </Surface>
               <View style={styles.entryList}>
                 {scoreBreakdown.componentScores.map(component => (
                   <Surface key={component.id} style={styles.scoreComponentCard} elevation={0}>
@@ -872,44 +1310,48 @@ export default function InsightsScreen() {
                   </Surface>
                 ))}
               </View>
-            </Card.Content>
-          </Card>
-          <Card style={styles.archiveCard}>
-            <Card.Content>
-              <View style={styles.sectionHeader}>
-                <Text variant="titleMedium" style={styles.cardTitle}>
-                  Trends over time
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('trends')}>
+            <Card style={styles.archiveCard}>
+              <Card.Content>
+                <View style={styles.sectionHeader}>
+                  <Text variant="titleMedium" style={styles.cardTitle}>
+                    Trends over time
                 </Text>
                 <Text style={styles.sectionMeta}>
                   Daily Firestore snapshots preserve score and pulse history so your progress is not only inferred from the current moment.
                 </Text>
               </View>
               <View style={styles.chartStack}>
-                <MetricTrendChart
+                <ScoreLineChart
                   title="Score trend"
                   points={chartPoints}
                   color="#B25B63"
                   maxValue={100}
-                  metric="score"
+                  currentValue={displayScore}
+                  delta={scoreChangeSummary.delta}
+                  supportingText={scoreChangeSummary.body}
                   emptyCopy="Score history will appear after the first snapshot is written for this couple."
                 />
-                <DualMetricTrendChart title="Connection vs tension" points={chartPoints} />
-                <MetricTrendChart
-                  title="Check-in streak trend"
+                <ConnectionTensionLineChart
+                  title="Connection vs tension"
                   points={chartPoints}
-                  color="#D79395"
-                  maxValue={Math.max(7, ...chartPoints.map(point => point.streak), 1)}
-                  metric="streak"
-                  emptyCopy="Streak history will appear after shared insights start landing."
+                  headline={trendInterpretation.headline}
+                  body={trendInterpretation.body}
                 />
+                <StreakSparklineCard points={chartPoints} currentStreak={displayStreak} />
               </View>
-            </Card.Content>
-          </Card>
-          <Card style={styles.archiveCard}>
-            <Card.Content>
-              <View style={styles.sectionHeader}>
-                <Text variant="titleMedium" style={styles.cardTitle}>
-                  Coaching recommendations
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('coaching')}>
+            <Card style={styles.archiveCard}>
+              <Card.Content>
+                <View style={styles.sectionHeader}>
+                  <Text variant="titleMedium" style={styles.cardTitle}>
+                    Coaching recommendations
                 </Text>
                 <Text style={styles.sectionMeta}>
                   These suggestions respond to weak areas, low follow-through, elevated tension, and gaps in affection or shared reflection.
@@ -934,11 +1376,18 @@ export default function InsightsScreen() {
                               <Text style={styles.entryMeta}>{recommendation.ctaLabel}</Text>
                             </View>
                             <View style={styles.visibilityPill}>
-                              <Text style={styles.visibilityPillText}>{recommendation.focus}</Text>
+                              <Text style={styles.visibilityPillText}>{getRecommendationFocusLabel(recommendation.focus)}</Text>
                             </View>
                           </View>
                           <Text style={styles.entryDetail}>{recommendation.body}</Text>
+                          <Surface style={styles.coachingReasonCard} elevation={0}>
+                            <Text style={styles.coachingReasonLabel}>Why now</Text>
+                            <Text style={styles.entryDetail}>{recommendation.reason}</Text>
+                          </Surface>
                           <View style={styles.metricsRow}>
+                            <View style={styles.metricPill}>
+                              <Text style={styles.metricLabel}>{recommendation.signal}</Text>
+                            </View>
                             {recommendation.area ? (
                               <View style={styles.metricPill}>
                                 <Text style={styles.metricLabel}>Area {LOVE_AREA_LABELS[recommendation.area]}</Text>
@@ -952,6 +1401,13 @@ export default function InsightsScreen() {
                             {prompt ? (
                               <View style={styles.metricPill}>
                                 <Text style={styles.metricLabel}>Prompt {prompt.label}</Text>
+                              </View>
+                            ) : null}
+                            {recommendation.suggestedAction ? (
+                              <View style={styles.metricPillWide}>
+                                <Text style={styles.metricLabel}>
+                                  Action {getCoachingSuggestionLabel(recommendation.suggestedAction)}
+                                </Text>
                               </View>
                             ) : null}
                           </View>
@@ -1051,18 +1507,20 @@ export default function InsightsScreen() {
                   ))
                 )}
               </View>
-            </Card.Content>
-          </Card>
-          <Card style={styles.archiveCard}>
-            <Card.Content>
-              <View style={styles.sectionHeader}>
-                <Text variant="titleMedium" style={styles.cardTitle}>
-                  Relationship history
-                </Text>
-                <Text style={styles.sectionMeta}>
-                  A mixed timeline of Love Notes, shared reflections, completions, and appreciations.
-                </Text>
-              </View>
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('history')}>
+            <Card style={styles.archiveCard}>
+              <Card.Content>
+                <View style={styles.sectionHeader}>
+                  <Text variant="titleMedium" style={styles.cardTitle}>
+                    Relationship history
+                  </Text>
+                  <Text style={styles.sectionMeta}>
+                    A mixed timeline of Love Notes, shared reflections, completions, and appreciations.
+                  </Text>
+                </View>
               <View style={styles.entryList}>
                 {historyFeed.length === 0 ? (
                   <Text style={styles.emptyCopy}>No recent history yet in this time window.</Text>
@@ -1087,18 +1545,20 @@ export default function InsightsScreen() {
                   ))
                 )}
               </View>
-            </Card.Content>
-          </Card>
-          <Surface style={styles.hero} elevation={0}>
-            <Text variant="titleMedium" style={styles.heroTitle}>
-              Daily check-in + relationship pulse
-            </Text>
-            <Text style={styles.heroBody}>
-              Capture how you feel, how connected you feel, where tension is sitting, what you appreciated, what you need, and what move helps next.
-            </Text>
-          </Surface>
-          <Card style={styles.card}>
-            <Card.Content style={styles.cardContent}>
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('checkin')}>
+            <Surface style={styles.hero} elevation={0}>
+              <Text variant="titleMedium" style={styles.heroTitle}>
+                Daily check-in + relationship pulse
+              </Text>
+              <Text style={styles.heroBody}>
+                Capture how you feel, how connected you feel, where tension is sitting, what you appreciated, what you need, and what move helps next.
+              </Text>
+            </Surface>
+            <Card style={styles.card}>
+              <Card.Content style={styles.cardContent}>
               <View style={styles.sectionHeader}>
                 <Text variant="titleMedium" style={styles.cardTitle}>
                   {editingContext ? 'Edit this reflection' : 'Save this reflection as'}
@@ -1246,16 +1706,18 @@ export default function InsightsScreen() {
                   </Button>
                 )}
               </View>
-            </Card.Content>
-          </Card>
-          <Card style={styles.archiveCard}>
-            <Card.Content>
-              <View style={styles.sectionHeader}>
-                <Text variant="titleMedium" style={styles.cardTitle}>
-                  Saved reflections
-                </Text>
-                <Text style={styles.sectionMeta}>Filter your archive by privacy state</Text>
-              </View>
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('saved')}>
+            <Card style={styles.archiveCard}>
+              <Card.Content>
+                <View style={styles.sectionHeader}>
+                  <Text variant="titleMedium" style={styles.cardTitle}>
+                    Saved reflections
+                  </Text>
+                  <Text style={styles.sectionMeta}>Filter your archive by privacy state</Text>
+                </View>
               <Surface style={styles.segmentedWrap} elevation={0}>
                 <SegmentedButtons
                   value={archiveFilter}
@@ -1330,10 +1792,12 @@ export default function InsightsScreen() {
                   })
                 )}
               </View>
-            </Card.Content>
-          </Card>
+              </Card.Content>
+            </Card>
+          </View>
         </ScrollView>
       </SafeAreaView>
+      <JumpToSectionFab sections={visibleJumpSections} onSelectSection={handleJumpToSection} />
       <Portal>
         <Dialog
           visible={!!deleteContext}
@@ -1406,6 +1870,77 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 6,
   },
+  topSummaryCard: {
+    borderRadius: 24,
+    backgroundColor: '#F8E2D8',
+    borderWidth: 1,
+    borderColor: '#F0D0C0',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 12,
+  },
+  topSummaryHeader: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+  },
+  topSummaryPrimary: {
+    flex: 1,
+    gap: 4,
+  },
+  topSummaryEyebrow: {
+    color: '#8F6B74',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  topSummaryScore: {
+    color: '#3F2831',
+    fontSize: 38,
+    lineHeight: 42,
+    fontWeight: '800',
+  },
+  topSummaryScoreMeta: {
+    color: '#7C5964',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  topSummarySparkWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  sparklineMeta: {
+    marginTop: 2,
+    color: '#8F6B74',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  topSummaryGrid: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  topSummaryStatCard: {
+    flex: 1,
+    borderRadius: 18,
+    backgroundColor: '#FFF8F3',
+    borderWidth: 1,
+    borderColor: '#F0DED4',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    gap: 4,
+  },
+  topSummaryStatValue: {
+    color: '#3F2831',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  topSummaryStatLabel: {
+    color: '#8F6B74',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600',
+  },
   summaryPill: {
     borderRadius: 999,
     paddingHorizontal: 9,
@@ -1414,10 +1949,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#F2D3C7',
   },
+  summaryPillPositive: {
+    backgroundColor: '#EEF6EA',
+    borderColor: '#CFE1C8',
+  },
+  summaryPillNegative: {
+    backgroundColor: '#FAECE8',
+    borderColor: '#E7CBC5',
+  },
   summaryLabel: {
     color: '#7C5964',
     fontSize: 11,
     fontWeight: '700',
+  },
+  sparklinePlaceholder: {
+    width: SPARKLINE_WIDTH,
+    height: SPARKLINE_HEIGHT,
   },
   syncText: {
     color: '#B25B63',
@@ -1646,6 +2193,13 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     backgroundColor: '#FFF3EA',
   },
+  metricPillWide: {
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: '#FFF3EA',
+    maxWidth: '100%',
+  },
   metricLabel: {
     color: '#3F2831',
     fontSize: 12,
@@ -1699,6 +2253,59 @@ const styles = StyleSheet.create({
     color: '#7C5964',
     lineHeight: 21,
   },
+  explanationCard: {
+    marginTop: 10,
+    borderRadius: 18,
+    backgroundColor: '#FFF8F3',
+    borderWidth: 1,
+    borderColor: '#F0DED4',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  explanationCardPositive: {
+    backgroundColor: '#FFF6F1',
+    borderColor: '#E6C3B5',
+  },
+  explanationCardNegative: {
+    backgroundColor: '#FFF3F0',
+    borderColor: '#EABDB9',
+  },
+  visibilityPillPositive: {
+    backgroundColor: '#E8F3E4',
+  },
+  visibilityPillNegative: {
+    backgroundColor: '#F7E2E0',
+  },
+  driverList: {
+    gap: 8,
+    marginTop: 2,
+  },
+  driverCard: {
+    borderRadius: 16,
+    backgroundColor: '#FFF3EA',
+    borderWidth: 1,
+    borderColor: '#F0DED4',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  coachingReasonCard: {
+    marginTop: 10,
+    borderRadius: 16,
+    backgroundColor: '#FFF3EA',
+    borderWidth: 1,
+    borderColor: '#F0DED4',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    gap: 4,
+  },
+  coachingReasonLabel: {
+    color: '#8F6B74',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
   chartStack: {
     gap: 10,
     marginTop: 14,
@@ -1712,42 +2319,54 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     gap: 10,
   },
+  streakCard: {
+    borderRadius: 20,
+    backgroundColor: '#FFF8F3',
+    borderWidth: 1,
+    borderColor: '#F0DED4',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 10,
+  },
   chartTitle: {
     color: '#3F2831',
     fontWeight: '700',
   },
-  chartRow: {
+  chartHeaderRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  chartHeaderMetricWrap: {
     alignItems: 'flex-end',
-    gap: 8,
+    gap: 4,
   },
-  chartColumn: {
+  chartHeroValue: {
+    color: '#3F2831',
+    fontSize: 24,
+    fontWeight: '800',
+  },
+  lineChartFrame: {
+    borderRadius: 18,
+    backgroundColor: '#FFF3EA',
+    borderWidth: 1,
+    borderColor: '#F0DED4',
+    overflow: 'hidden',
+  },
+  chartAxisRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 4,
+    paddingHorizontal: 2,
+    marginTop: -2,
+  },
+  chartAxisLabel: {
     flex: 1,
-    alignItems: 'center',
-    gap: 6,
-  },
-  chartValue: {
-    color: '#7C5964',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  chartMicroValue: {
-    color: '#7C5964',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  chartTrack: {
-    width: '100%',
-    minHeight: 92,
-    borderRadius: 14,
-    backgroundColor: '#FBEAE3',
-    justifyContent: 'flex-end',
-    paddingHorizontal: 4,
-    paddingBottom: 4,
-  },
-  chartBar: {
-    width: '100%',
-    borderRadius: 10,
+    textAlign: 'center',
+    color: '#8F6B74',
+    fontSize: 9,
+    fontWeight: '600',
   },
   chartLabel: {
     color: '#8F6B74',
@@ -1774,26 +2393,25 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
-  dualMetricHeader: {
+  streakCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    width: '100%',
-  },
-  dualChartTrack: {
-    width: '100%',
-    minHeight: 92,
-    borderRadius: 14,
-    backgroundColor: '#FBEAE3',
-    justifyContent: 'flex-end',
     alignItems: 'center',
-    flexDirection: 'row',
-    gap: 4,
-    paddingHorizontal: 5,
-    paddingBottom: 4,
+    gap: 10,
   },
-  dualChartBar: {
-    flex: 1,
-    borderRadius: 10,
+  streakValueWrap: {
+    alignItems: 'flex-end',
+  },
+  streakValue: {
+    color: '#3F2831',
+    fontSize: 24,
+    fontWeight: '800',
+  },
+  streakValueLabel: {
+    color: '#8F6B74',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
   },
   scoreComponentCard: {
     borderRadius: 18,

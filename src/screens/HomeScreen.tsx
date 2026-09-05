@@ -1,11 +1,12 @@
-import React, { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import React, { useMemo, useRef, useState } from 'react';
+import { type LayoutChangeEvent, ScrollView, StyleSheet, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth } from '@react-native-firebase/auth';
 import { Button, Card, Paragraph, Snackbar, Surface, Text, TextInput } from 'react-native-paper';
 import MirrorCanvas from '../MirrorCanvas';
+import JumpToSectionFab, { type JumpSection } from '../components/JumpToSectionFab';
 import { LOVE_NOTE_PROMPTS, LOVE_NOTE_TAG_LABELS, LOVE_NOTE_TYPE_LABELS } from '../lib/loveNotes';
 import { LOVE_AREA_LABELS, LOVE_LIBRARY_GOAL_LABELS, LOVE_LIBRARY_ITEMS } from '../lib/loveLibrary';
 import { disableNotifications, enableNotifications } from '../lib/notifications';
@@ -33,6 +34,15 @@ const APPRECIATION_REACTIONS: Array<{ value: LoveActionAppreciationReaction; lab
   { value: 'thankYou', label: 'Thank you' },
   { value: 'madeMyDay', label: 'Made my day' },
   { value: 'morePlease', label: 'More please' },
+];
+const HOME_JUMP_SECTIONS: JumpSection[] = [
+  { key: 'loveNotes', label: 'Love Notes' },
+  { key: 'library', label: 'Library Nudges' },
+  { key: 'notifications', label: 'Notifications' },
+  { key: 'reminders', label: 'Reminders' },
+  { key: 'proposals', label: 'Proposals' },
+  { key: 'actions', label: 'Active Actions' },
+  { key: 'archive', label: 'Love Note Archive' },
 ];
 
 function getRelativeTime(createdAt: number) {
@@ -182,7 +192,9 @@ export default function HomeScreen() {
   const [transitioningActionId, setTransitioningActionId] = useState<string | null>(null);
   const [notificationBusy, setNotificationBusy] = useState(false);
   const [remindingActionId, setRemindingActionId] = useState<string | null>(null);
+  const [sectionOffsets, setSectionOffsets] = useState<Record<string, number>>({});
   const [confirmationReactionDrafts, setConfirmationReactionDrafts] = useState<Record<string, LoveActionConfirmationReaction>>({});
+  const scrollViewRef = useRef<any>(null);
   const [confirmationNoteDrafts, setConfirmationNoteDrafts] = useState<Record<string, string>>({});
   const [appreciationReactionDrafts, setAppreciationReactionDrafts] = useState<Record<string, LoveActionAppreciationReaction>>({});
   const [appreciationNoteDrafts, setAppreciationNoteDrafts] = useState<Record<string, string>>({});
@@ -419,6 +431,21 @@ export default function HomeScreen() {
     }
   };
 
+  const registerSection = (key: string) => ({ nativeEvent: { layout } }: LayoutChangeEvent) => {
+    const nextY = layout.y;
+    setSectionOffsets(current => (current[key] === nextY ? current : { ...current, [key]: nextY }));
+  };
+
+  const visibleJumpSections = HOME_JUMP_SECTIONS.filter(section => sectionOffsets[section.key] !== undefined);
+
+  const handleJumpToSection = (key: string) => {
+    const targetY = sectionOffsets[key];
+
+    if (typeof targetY === 'number') {
+      scrollViewRef.current?.scrollTo({ y: Math.max(0, targetY - 12), animated: true });
+    }
+  };
+
   const summaryRow = (
     <View style={styles.summaryRow}>
       <View style={styles.summaryPill}>
@@ -491,6 +518,7 @@ export default function HomeScreen() {
     <>
       <SafeAreaView style={styles.screen} edges={['top']}>
         <ScrollView
+          ref={scrollViewRef}
           contentInsetAdjustmentBehavior="never"
           keyboardShouldPersistTaps="handled"
           scrollEnabled={!mirrorGestureActive}
@@ -509,153 +537,162 @@ export default function HomeScreen() {
           {!loveActionsHydrated || loveActionsSyncing ? (
             <Text style={styles.syncText}>Syncing shared Love Actions...</Text>
           ) : null}
-          <Card style={styles.card}>
-            <Card.Content style={styles.cardContent}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Love Notes
-              </Text>
-              <Paragraph style={styles.cardBody}>
-                Keep a lightweight stream of warmth alive between you. Use a prompt, reply to the latest note, or open the archive below.
-              </Paragraph>
-              <View style={styles.summaryRow}>
-                <View style={styles.summaryPill}>
-                  <Text style={styles.summaryLabel}>Shared {messages.length}</Text>
-                </View>
-                <View style={styles.summaryPill}>
-                  <Text style={styles.summaryLabel}>Revealed {revealedCount}</Text>
-                </View>
-                <View style={styles.summaryPill}>
-                  <Text style={styles.summaryLabel}>Prompts {LOVE_NOTE_PROMPTS.length}</Text>
-                </View>
-              </View>
-              {selectedMessage ? (
-                <Surface style={styles.actionItem} elevation={0}>
-                  <Text style={styles.actionTitle}>{selectedMessage.text || 'Finger-drawn Love Note'}</Text>
-                  <Text style={styles.actionMeta}>
-                    {selectedMessage.senderId === user?.uid ? 'From you' : `From ${selectedMessage.senderEmail}`} · {getRelativeTime(selectedMessage.createdAt)}
-                  </Text>
-                  <Text style={styles.actionMeta}>
-                    {LOVE_NOTE_TYPE_LABELS[selectedMessage.noteType]} · {selectedMessage.tags.map(tag => LOVE_NOTE_TAG_LABELS[tag]).join(' · ') || 'No tags'}
-                  </Text>
-                  <View style={styles.actionsRow}>
-                    <Button mode="contained-tonal" onPress={() => navigation.navigate('Love')}>
-                      Reply in Love
-                    </Button>
-                    <Button mode="text" onPress={() => setRevealProgress(selectedMessage.id, 0)}>
-                      Reset reveal
-                    </Button>
+          <View onLayout={registerSection('loveNotes')}>
+            <Card style={styles.card}>
+              <Card.Content style={styles.cardContent}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Love Notes
+                </Text>
+                <Paragraph style={styles.cardBody}>
+                  Keep a lightweight stream of warmth alive between you. Use a prompt, reply to the latest note, or open the archive below.
+                </Paragraph>
+                <View style={styles.summaryRow}>
+                  <View style={styles.summaryPill}>
+                    <Text style={styles.summaryLabel}>Shared {messages.length}</Text>
                   </View>
-                </Surface>
-              ) : null}
-              <View style={styles.actionList}>
-                {LOVE_NOTE_PROMPTS.slice(0, 3).map(prompt => (
-                  <Surface key={prompt.id} style={styles.actionItem} elevation={0}>
-                    <Text style={styles.actionTitle}>{prompt.label}</Text>
-                    <Text style={styles.actionMeta}>{prompt.prompt}</Text>
-                    <Button mode="contained-tonal" onPress={() => openLoveNotePrompt(prompt.id)}>
-                      Write in Love
-                    </Button>
+                  <View style={styles.summaryPill}>
+                    <Text style={styles.summaryLabel}>Revealed {revealedCount}</Text>
+                  </View>
+                  <View style={styles.summaryPill}>
+                    <Text style={styles.summaryLabel}>Prompts {LOVE_NOTE_PROMPTS.length}</Text>
+                  </View>
+                </View>
+                {selectedMessage ? (
+                  <Surface style={styles.actionItem} elevation={0}>
+                    <Text style={styles.actionTitle}>{selectedMessage.text || 'Finger-drawn Love Note'}</Text>
+                    <Text style={styles.actionMeta}>
+                      {selectedMessage.senderId === user?.uid ? 'From you' : `From ${selectedMessage.senderEmail}`} · {getRelativeTime(selectedMessage.createdAt)}
+                    </Text>
+                    <Text style={styles.actionMeta}>
+                      {LOVE_NOTE_TYPE_LABELS[selectedMessage.noteType]} · {selectedMessage.tags.map(tag => LOVE_NOTE_TAG_LABELS[tag]).join(' · ') || 'No tags'}
+                    </Text>
+                    <View style={styles.actionsRow}>
+                      <Button mode="contained-tonal" onPress={() => navigation.navigate('Love')}>
+                        Reply in Love
+                      </Button>
+                      <Button mode="text" onPress={() => setRevealProgress(selectedMessage.id, 0)}>
+                        Reset reveal
+                      </Button>
+                    </View>
                   </Surface>
-                ))}
-              </View>
-            </Card.Content>
-          </Card>
-          <Card style={styles.card}>
-            <Card.Content style={styles.cardContent}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Love Library nudges
-              </Text>
-              <Paragraph style={styles.cardBody}>
-                Turn your partner’s current cues into something actionable, whether it is reassurance, play, support, or closeness.
-              </Paragraph>
-              {suggestedLibraryItems.length === 0 ? (
-                <Text style={styles.archiveHint}>Your curated Love Library picks will appear here as your shared space grows.</Text>
-              ) : (
+                ) : null}
                 <View style={styles.actionList}>
-                  {suggestedLibraryItems.map(item => (
-                    <Surface key={item.id} style={styles.actionItem} elevation={0}>
-                      <Text style={styles.actionTitle}>{item.title}</Text>
-                      <Text style={styles.actionMeta}>{item.description}</Text>
-                      <Text style={styles.actionMeta}>
-                        {LOVE_AREA_LABELS[item.area]} · {LOVE_LIBRARY_GOAL_LABELS[item.goal]}
-                      </Text>
-                      <Button mode="contained-tonal" onPress={() => openLibrarySuggestion(item.id)}>
-                        Load in Love
+                  {LOVE_NOTE_PROMPTS.slice(0, 3).map(prompt => (
+                    <Surface key={prompt.id} style={styles.actionItem} elevation={0}>
+                      <Text style={styles.actionTitle}>{prompt.label}</Text>
+                      <Text style={styles.actionMeta}>{prompt.prompt}</Text>
+                      <Button mode="contained-tonal" onPress={() => openLoveNotePrompt(prompt.id)}>
+                        Write in Love
                       </Button>
                     </Surface>
                   ))}
                 </View>
-              )}
-            </Card.Content>
-          </Card>
-          <Card style={styles.card}>
-            <Card.Content style={styles.cardContent}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Device notifications
-              </Text>
-              <Paragraph style={styles.cardBody}>
-                Turn on local reminders for your due Love Actions and optionally register this device for partner push reminders.
-              </Paragraph>
-              <Text style={styles.actionMeta}>
-                Status: {notificationsEnabled ? 'Enabled' : 'Off'} · Permission: {notificationPermission} · Push token: {notificationToken ? 'Registered' : 'Missing'}
-              </Text>
-              <View style={styles.actionsRow}>
-                <Button
-                  mode="contained"
-                  onPress={() => void handleNotificationToggle(true)}
-                  disabled={notificationBusy}
-                  loading={notificationBusy && !notificationsEnabled}
-                  style={styles.primaryButton}
-                >
-                  Enable reminders
-                </Button>
-                <Button
-                  mode="outlined"
-                  onPress={() => void handleNotificationToggle(false)}
-                  disabled={notificationBusy || !notificationsEnabled}
-                >
-                  Turn off
-                </Button>
-              </View>
-            </Card.Content>
-          </Card>
-          <Card style={styles.card}>
-            <Card.Content style={styles.cardContent}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Gentle reminders
-              </Text>
-              <Paragraph style={styles.cardBody}>
-                A live in-app reminder feed based on appreciated rituals and Love Actions coming due soon.
-              </Paragraph>
-              {reminderFeed.length === 0 ? (
-                <Text style={styles.archiveHint}>No reminders right now.</Text>
-              ) : (
-                <View style={styles.actionList}>
-                  {reminderFeed.map(reminder => (
-                    <Surface key={reminder.id} style={styles.actionItem} elevation={0}>
-                      <Text style={styles.actionTitle}>{reminder.title}</Text>
-                      <Text style={styles.actionMeta}>{reminder.body}</Text>
-                      <Text style={styles.actionMeta}>
-                        {getReminderTimeLabel(reminder.targetAt)} · {formatDueLabel(reminder.targetAt)}
-                      </Text>
-                      <View style={styles.actionsRow}>
-                        <Button mode="contained-tonal" onPress={() => navigation.navigate('Calendar')}>
-                          Open Calendar
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('library')}>
+            <Card style={styles.card}>
+              <Card.Content style={styles.cardContent}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Love Library nudges
+                </Text>
+                <Paragraph style={styles.cardBody}>
+                  Turn your partner’s current cues into something actionable, whether it is reassurance, play, support, or closeness.
+                </Paragraph>
+                {suggestedLibraryItems.length === 0 ? (
+                  <Text style={styles.archiveHint}>Your curated Love Library picks will appear here as your shared space grows.</Text>
+                ) : (
+                  <View style={styles.actionList}>
+                    {suggestedLibraryItems.map(item => (
+                      <Surface key={item.id} style={styles.actionItem} elevation={0}>
+                        <Text style={styles.actionTitle}>{item.title}</Text>
+                        <Text style={styles.actionMeta}>{item.description}</Text>
+                        <Text style={styles.actionMeta}>
+                          {LOVE_AREA_LABELS[item.area]} · {LOVE_LIBRARY_GOAL_LABELS[item.goal]}
+                        </Text>
+                        <Button mode="contained-tonal" onPress={() => openLibrarySuggestion(item.id)}>
+                          Load in Love
                         </Button>
-                        <Button mode="text" onPress={() => navigation.navigate('Love')}>
-                          Open Love
-                        </Button>
-                      </View>
-                    </Surface>
-                  ))}
+                      </Surface>
+                    ))}
+                  </View>
+                )}
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('notifications')}>
+            <Card style={styles.card}>
+              <Card.Content style={styles.cardContent}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Device notifications
+                </Text>
+                <Paragraph style={styles.cardBody}>
+                  Turn on local reminders for your due Love Actions and optionally register this device for partner push reminders.
+                </Paragraph>
+                <Text style={styles.actionMeta}>
+                  Status: {notificationsEnabled ? 'Enabled' : 'Off'} · Permission: {notificationPermission} · Push token: {notificationToken ? 'Registered' : 'Missing'}
+                </Text>
+                <View style={styles.actionsRow}>
+                  <Button
+                    mode="contained"
+                    onPress={() => void handleNotificationToggle(true)}
+                    disabled={notificationBusy}
+                    loading={notificationBusy && !notificationsEnabled}
+                    style={styles.primaryButton}
+                  >
+                    Enable reminders
+                  </Button>
+                  <Button
+                    mode="outlined"
+                    onPress={() => void handleNotificationToggle(false)}
+                    disabled={notificationBusy || !notificationsEnabled}
+                  >
+                    Turn off
+                  </Button>
                 </View>
-              )}
-            </Card.Content>
-          </Card>
-          <Card style={styles.card}>
-            <Card.Content style={styles.cardContent}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Proposal inbox
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('reminders')}>
+            <Card style={styles.card}>
+              <Card.Content style={styles.cardContent}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Gentle reminders
+                </Text>
+                <Paragraph style={styles.cardBody}>
+                  A live in-app reminder feed based on appreciated rituals and Love Actions coming due soon.
+                </Paragraph>
+                {reminderFeed.length === 0 ? (
+                  <Text style={styles.archiveHint}>No reminders right now.</Text>
+                ) : (
+                  <View style={styles.actionList}>
+                    {reminderFeed.map(reminder => (
+                      <Surface key={reminder.id} style={styles.actionItem} elevation={0}>
+                        <Text style={styles.actionTitle}>{reminder.title}</Text>
+                        <Text style={styles.actionMeta}>{reminder.body}</Text>
+                        <Text style={styles.actionMeta}>
+                          {getReminderTimeLabel(reminder.targetAt)} · {formatDueLabel(reminder.targetAt)}
+                        </Text>
+                        <View style={styles.actionsRow}>
+                          <Button mode="contained-tonal" onPress={() => navigation.navigate('Calendar')}>
+                            Open Calendar
+                          </Button>
+                          <Button mode="text" onPress={() => navigation.navigate('Love')}>
+                            Open Love
+                          </Button>
+                        </View>
+                      </Surface>
+                    ))}
+                  </View>
+                )}
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('proposals')}>
+            <Card style={styles.card}>
+              <Card.Content style={styles.cardContent}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Proposal inbox
               </Text>
               <Paragraph style={styles.cardBody}>
                 Shared Love Actions land here when your partner wants your agreement before they become active.
@@ -698,14 +735,16 @@ export default function HomeScreen() {
                   })}
                 </View>
               )}
-            </Card.Content>
-          </Card>
-          <Card style={styles.archiveCard}>
-            <Card.Content>
-              <View style={styles.archiveHeaderRow}>
-                <View>
-                  <Text variant="titleMedium" style={styles.cardTitle}>
-                    Active Love Actions
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('actions')}>
+            <Card style={styles.archiveCard}>
+              <Card.Content>
+                <View style={styles.archiveHeaderRow}>
+                  <View>
+                    <Text variant="titleMedium" style={styles.cardTitle}>
+                      Active Love Actions
                   </Text>
                   <Text style={styles.archiveMeta}>
                     Move shared actions through due, done, confirmed, and appreciated.
@@ -883,8 +922,9 @@ export default function HomeScreen() {
                   })}
                 </View>
               )}
-            </Card.Content>
-          </Card>
+              </Card.Content>
+            </Card>
+          </View>
           {selectedMessage ? (
             <Surface style={styles.hero} elevation={0}>
               <View style={styles.heroCopy}>
@@ -948,12 +988,13 @@ export default function HomeScreen() {
               </Card.Content>
             </Card>
           ) : null}
-          <Card style={styles.archiveCard}>
-            <Card.Content>
-              <View style={styles.archiveHeaderRow}>
-                <View>
-                  <Text variant="titleMedium" style={styles.cardTitle}>
-                    Love Notes archive
+          <View onLayout={registerSection('archive')}>
+            <Card style={styles.archiveCard}>
+              <Card.Content>
+                <View style={styles.archiveHeaderRow}>
+                  <View>
+                    <Text variant="titleMedium" style={styles.cardTitle}>
+                      Love Notes archive
                   </Text>
                   <Text style={styles.archiveMeta}>
                     {messages.length} synced notes with {profile.partnerEmail ?? 'your partner'}
@@ -1016,10 +1057,12 @@ export default function HomeScreen() {
                   })}
                 </View>
               )}
-            </Card.Content>
-          </Card>
+              </Card.Content>
+            </Card>
+          </View>
         </ScrollView>
       </SafeAreaView>
+      <JumpToSectionFab sections={visibleJumpSections} onSelectSection={handleJumpToSection} />
       <Snackbar
         visible={!!snackbar}
         onDismiss={() => setSnackbar('')}

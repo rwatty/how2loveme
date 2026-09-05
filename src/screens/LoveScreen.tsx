@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { type LayoutChangeEvent, ScrollView, StyleSheet, View } from 'react-native';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,6 +17,7 @@ import {
   TextInput,
 } from 'react-native-paper';
 import MirrorCanvas from '../MirrorCanvas';
+import JumpToSectionFab, { type JumpSection } from '../components/JumpToSectionFab';
 import {
   LOVE_NOTE_PROMPTS,
   LOVE_NOTE_TAG_LABELS,
@@ -90,6 +91,13 @@ const VISIBILITY_OPTIONS: Array<{ value: LovePreferenceVisibility; label: string
   { value: 'private', label: 'Private' },
   { value: 'shared', label: 'Shared' },
   { value: 'surprise', label: 'Surprise' },
+];
+const LOVE_JUMP_SECTIONS: JumpSection[] = [
+  { key: 'profile', label: 'Love Profile' },
+  { key: 'library', label: 'Love Library' },
+  { key: 'actions', label: 'Shared Actions' },
+  { key: 'notes', label: 'Compose Love Note' },
+  { key: 'recentNotes', label: 'Recent Love Notes' },
 ];
 const DATE_INPUT_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_INPUT_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -281,6 +289,8 @@ export default function LoveScreen() {
   const [deleting, setDeleting] = useState(false);
   const [respondingActionId, setRespondingActionId] = useState<string | null>(null);
   const [transitioningActionId, setTransitioningActionId] = useState<string | null>(null);
+  const [sectionOffsets, setSectionOffsets] = useState<Record<string, number>>({});
+  const scrollViewRef = useRef<any>(null);
   const trimmedMessage = messageText.trim();
   const trimmedPreference = preferenceText.trim();
   const trimmedActionTitle = actionTitle.trim();
@@ -712,10 +722,26 @@ export default function LoveScreen() {
     setSnackbar('Loaded Love Library idea into your forms.');
   };
 
+  const registerSection = (key: string) => ({ nativeEvent: { layout } }: LayoutChangeEvent) => {
+    const nextY = layout.y;
+    setSectionOffsets(current => (current[key] === nextY ? current : { ...current, [key]: nextY }));
+  };
+
+  const visibleJumpSections = LOVE_JUMP_SECTIONS.filter(section => sectionOffsets[section.key] !== undefined);
+
+  const handleJumpToSection = (key: string) => {
+    const targetY = sectionOffsets[key];
+
+    if (typeof targetY === 'number') {
+      scrollViewRef.current?.scrollTo({ y: Math.max(0, targetY - 12), animated: true });
+    }
+  };
+
   return (
     <>
       <SafeAreaView style={styles.screen} edges={['top']}>
         <ScrollView
+          ref={scrollViewRef}
           contentInsetAdjustmentBehavior="never"
           keyboardShouldPersistTaps="handled"
           scrollEnabled={!mirrorGestureActive}
@@ -762,10 +788,11 @@ export default function LoveScreen() {
               </Card.Content>
             </Card>
           ) : null}
-          <Card style={styles.foundationCard}>
-            <Card.Content style={styles.cardContent}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Your Love Profile
+          <View onLayout={registerSection('profile')}>
+            <Card style={styles.foundationCard}>
+              <Card.Content style={styles.cardContent}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Your Love Profile
               </Text>
               <Text style={styles.foundationBody}>
                 Name a concrete behavior that helps you feel loved, then tune how often, when, and how visible it should feel.
@@ -883,12 +910,14 @@ export default function LoveScreen() {
                   ))
                 )}
               </View>
-            </Card.Content>
-          </Card>
-          <Card style={styles.libraryCard}>
-            <Card.Content style={styles.cardContent}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Full Love Library
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('library')}>
+            <Card style={styles.libraryCard}>
+              <Card.Content style={styles.cardContent}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Full Love Library
               </Text>
               <Text style={styles.foundationBody}>
                 Browse curated ways of loving by area, intention, effort, and visibility. Load any idea into your profile or your next shared proposal.
@@ -993,12 +1022,14 @@ export default function LoveScreen() {
                   <Text style={styles.foundationMeta}>No library ideas match those filters yet. Clear one filter or try a broader search.</Text>
                 ) : null}
               </View>
-            </Card.Content>
-          </Card>
-          <Card style={styles.foundationCard}>
-            <Card.Content style={styles.cardContent}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Shared Love Actions
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('actions')}>
+            <Card style={styles.foundationCard}>
+              <Card.Content style={styles.cardContent}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Shared Love Actions
               </Text>
               <Text style={styles.foundationBody}>
                 Turn a preference into a shared proposal. Your partner can accept it, send it back for rework, or move it through the relationship loop once it is active.
@@ -1218,9 +1249,11 @@ export default function LoveScreen() {
                   })
                 )}
               </View>
-            </Card.Content>
-          </Card>
-          <Surface style={styles.hero} elevation={0}>
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('notes')}>
+            <Surface style={styles.hero} elevation={0}>
             <Text variant="titleMedium" style={styles.heroTitle}>
               Love Notes
             </Text>
@@ -1270,8 +1303,8 @@ export default function LoveScreen() {
               onGestureActiveChange={setMirrorGestureActive}
               prompt={profile?.coupleId ? 'Write with your finger on the mirror.' : 'Connect your partner to send this Love Note.'}
             />
-          </Surface>
-          <Card style={styles.card}>
+            </Surface>
+            <Card style={styles.card}>
             <Card.Content style={styles.cardContent}>
               <Text variant="titleMedium" style={styles.cardTitle}>
                 Compose note
@@ -1344,12 +1377,14 @@ export default function LoveScreen() {
                   Clear mirror
                 </Button>
               </View>
-            </Card.Content>
-          </Card>
-          <Card style={styles.archiveCard}>
-            <Card.Content>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Recent Love Notes
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('recentNotes')}>
+            <Card style={styles.archiveCard}>
+              <Card.Content>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Recent Love Notes
               </Text>
               <Text style={styles.archiveMeta}>
                 {profile?.coupleId
@@ -1377,10 +1412,12 @@ export default function LoveScreen() {
               <Button mode="text" onPress={() => navigation.navigate('Home')} style={styles.archiveButton}>
                 Open Love Notes archive in Home
               </Button>
-            </Card.Content>
-          </Card>
+              </Card.Content>
+            </Card>
+          </View>
         </ScrollView>
       </SafeAreaView>
+      <JumpToSectionFab sections={visibleJumpSections} onSelectSection={handleJumpToSection} />
       <Portal>
         <Dialog visible={!!deleteTarget} onDismiss={() => !deleting && setDeleteTarget(null)} style={styles.dialog}>
           <Dialog.Title>Delete this item?</Dialog.Title>

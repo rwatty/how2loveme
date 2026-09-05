@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import React, { useMemo, useRef, useState } from 'react';
+import { type LayoutChangeEvent, ScrollView, StyleSheet, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ReactNativeBiometrics, { type BiometryType } from 'react-native-biometrics';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,6 +18,7 @@ import {
   TextInput,
 } from 'react-native-paper';
 import { getAuth, signOut } from '@react-native-firebase/auth';
+import JumpToSectionFab, { type JumpSection } from '../components/JumpToSectionFab';
 import {
   acceptPartnerInvite,
   cancelPartnerInvite,
@@ -30,6 +31,10 @@ import { useRelationshipStore } from '../store/useRelationshipStore';
 const BIOMETRIC_LOCK_STORAGE_KEY = '@how2loveme/biometric-lock-enabled';
 const rnBiometrics = new ReactNativeBiometrics();
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const US_JUMP_SECTIONS: JumpSection[] = [
+  { key: 'connection', label: 'Relationship Connection' },
+  { key: 'account', label: 'Account & Privacy' },
+];
 
 function getBiometricLabel(biometryType: BiometryType | null) {
   switch (biometryType) {
@@ -68,6 +73,8 @@ export default function UsScreen() {
   const outgoingInvite = useRelationshipStore(state => state.outgoingInvite);
   const [dialogVisible, setDialogVisible] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [sectionOffsets, setSectionOffsets] = useState<Record<string, number>>({});
+  const scrollViewRef = useRef<any>(null);
   const [biometricLoading, setBiometricLoading] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
@@ -230,11 +237,30 @@ export default function UsScreen() {
     }
   };
 
+  const registerSection = (key: string) => ({ nativeEvent: { layout } }: LayoutChangeEvent) => {
+    const nextY = layout.y;
+    setSectionOffsets(current => (current[key] === nextY ? current : { ...current, [key]: nextY }));
+  };
+
+  const visibleJumpSections = US_JUMP_SECTIONS.filter(section => sectionOffsets[section.key] !== undefined);
+
+  const handleJumpToSection = (key: string) => {
+    const targetY = sectionOffsets[key];
+
+    if (typeof targetY === 'number') {
+      scrollViewRef.current?.scrollTo({ y: Math.max(0, targetY - 12), animated: true });
+    }
+  };
+
   return (
     <>
       <SafeAreaView style={styles.screen} edges={['top']}>
-        <ScrollView contentInsetAdjustmentBehavior="never" style={styles.scrollView} contentContainerStyle={styles.content}>
-          <Text variant="headlineMedium" style={styles.header}>
+        <ScrollView
+          ref={scrollViewRef}
+          contentInsetAdjustmentBehavior="never"
+          style={styles.scrollView}
+          contentContainerStyle={styles.content}
+        >          <Text variant="headlineMedium" style={styles.header}>
             Us
           </Text>
           <Text style={styles.subheader}>
@@ -266,10 +292,11 @@ export default function UsScreen() {
               </Text>
             </View>
           </Surface>
-          <Card style={styles.card}>
-            <Card.Content style={styles.cardContent}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Relationship connection
+          <View onLayout={registerSection('connection')}>
+            <Card style={styles.card}>
+              <Card.Content style={styles.cardContent}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Relationship connection
               </Text>
               <Paragraph style={styles.cardBody}>{relationshipDescription}</Paragraph>
               {!!relationshipError ? <Text style={styles.errorText}>{relationshipError}</Text> : null}
@@ -351,12 +378,14 @@ export default function UsScreen() {
                   ))}
                 </>
               ) : null}
-            </Card.Content>
-          </Card>
-          <Card style={styles.archiveCard}>
-            <Card.Content style={styles.cardContent}>
-              <Text variant="titleMedium" style={styles.cardTitle}>
-                Account & Privacy
+              </Card.Content>
+            </Card>
+          </View>
+          <View onLayout={registerSection('account')}>
+            <Card style={styles.archiveCard}>
+              <Card.Content style={styles.cardContent}>
+                <Text variant="titleMedium" style={styles.cardTitle}>
+                  Account & Privacy
               </Text>
               <Paragraph style={styles.cardBody}>
                 Manage sign-in, privacy preferences, and access to your shared Love Space.
@@ -396,10 +425,12 @@ export default function UsScreen() {
               >
                 Sign Out
               </Button>
-            </Card.Content>
-          </Card>
+              </Card.Content>
+            </Card>
+          </View>
         </ScrollView>
       </SafeAreaView>
+      <JumpToSectionFab sections={visibleJumpSections} onSelectSection={handleJumpToSection} />
       <Portal>
         <Dialog visible={dialogVisible} onDismiss={() => setDialogVisible(false)} style={styles.dialog}>
           <Dialog.Title>Sign out?</Dialog.Title>

@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import React, { useMemo, useRef, useState } from 'react';
+import { type LayoutChangeEvent, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import DateTimePicker, {
   type DateTimePickerEvent,
 } from '@react-native-community/datetimepicker';
@@ -19,6 +19,7 @@ import {
   Text,
   TextInput,
 } from 'react-native-paper';
+import JumpToSectionFab, { type JumpSection } from '../components/JumpToSectionFab';
 import {
   createCalendarEvent,
   deleteCalendarEvent,
@@ -31,6 +32,11 @@ import { useRelationshipStore } from '../store/useRelationshipStore';
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const CALENDAR_JUMP_SECTIONS: JumpSection[] = [
+  { key: 'month', label: 'Month View' },
+  { key: 'agenda', label: 'Day Agenda' },
+  { key: 'dueActions', label: 'Due Love Actions' },
+];
 
 type CalendarDayCell = {
   dateKey: string;
@@ -537,6 +543,8 @@ export default function CalendarScreen() {
   const [previewMode, setPreviewMode] = useState(false);
   const [previewEvents, setPreviewEvents] = useState<CalendarEvent[]>([]);
   const [activePicker, setActivePicker] = useState<PickerTarget>(null);
+  const [sectionOffsets, setSectionOffsets] = useState<Record<string, number>>({});
+  const scrollViewRef = useRef<any>(null);
 
   const activeEvents = previewMode ? previewEvents : events;
   const monthGrid = useMemo(() => getMonthGrid(visibleMonthKey), [visibleMonthKey]);
@@ -914,6 +922,21 @@ export default function CalendarScreen() {
     );
   };
 
+  const registerSection = (key: string) => ({ nativeEvent: { layout } }: LayoutChangeEvent) => {
+    const nextY = layout.y;
+    setSectionOffsets(current => (current[key] === nextY ? current : { ...current, [key]: nextY }));
+  };
+
+  const visibleJumpSections = CALENDAR_JUMP_SECTIONS.filter(section => sectionOffsets[section.key] !== undefined);
+
+  const handleJumpToSection = (key: string) => {
+    const targetY = sectionOffsets[key];
+
+    if (typeof targetY === 'number') {
+      scrollViewRef.current?.scrollTo({ y: Math.max(0, targetY - 12), animated: true });
+    }
+  };
+
   if (!hydrated || relationshipSyncing) {
     return (
       <ScrollView style={styles.screen} contentContainerStyle={scrollContentStyle}>
@@ -971,7 +994,7 @@ export default function CalendarScreen() {
 
   return (
     <>
-      <ScrollView style={styles.screen} contentContainerStyle={scrollContentStyle}>
+      <ScrollView ref={scrollViewRef} style={styles.screen} contentContainerStyle={scrollContentStyle}>
         {summaryRow}
         {!!relationshipError && !previewMode && <Text style={styles.errorText}>{relationshipError}</Text>}
         {previewMode ? (
@@ -991,358 +1014,363 @@ export default function CalendarScreen() {
             </View>
           </Surface>
         ) : null}
-        <Surface style={styles.hero} elevation={1}>
-          <View style={styles.monthToolbar}>
-            <View style={styles.yearPill}>
-              <Button
-                mode="text"
-                compact
-                onPress={() => setVisibleMonthKey(shiftMonth(visibleMonthKey, -1))}
-                accessibilityLabel={`Show ${formatMonthTitle(shiftMonth(visibleMonthKey, -1))}`}
-                style={styles.yearNavButton}
-                labelStyle={styles.yearNavLabel}
-              >
-                ‹
-              </Button>
-              <Text style={styles.yearPillText}>{parseMonthKey(visibleMonthKey).getFullYear()}</Text>
-              <Button
-                mode="text"
-                compact
-                onPress={() => setVisibleMonthKey(shiftMonth(visibleMonthKey, 1))}
-                accessibilityLabel={`Show ${formatMonthTitle(shiftMonth(visibleMonthKey, 1))}`}
-                style={styles.yearNavButton}
-                labelStyle={styles.yearNavLabel}
-              >
-                ›
-              </Button>
-            </View>
-            <View style={styles.monthToolbarActions}>
-              <Button
-                mode="outlined"
-                compact
-                onPress={() => {
-                  const todayKey = formatDateKey(new Date());
-                  setSelectedDateKey(todayKey);
-                  setVisibleMonthKey(todayKey.slice(0, 7));
-                }}
-                style={styles.todayButton}
-                labelStyle={styles.toolbarButtonLabel}
-                accessibilityLabel="Jump to today in the calendar"
-              >
-                Today
-              </Button>
-              <Button
-                mode="contained"
-                compact
-                onPress={() => openCreateDialog()}
-                style={styles.addPlanPill}
-                labelStyle={styles.toolbarButtonLabel}
-                accessibilityLabel="Add a shared calendar plan"
-              >
-                Add
-              </Button>
-            </View>
-          </View>
-          <Text variant="displaySmall" style={styles.monthDisplayTitle}>
-            {formatMonthName(visibleMonthKey)}
-          </Text>
-          <Text style={styles.monthDisplayMeta}>{getMonthSummaryLabel(selectedMonthEventsCount)}</Text>
-          <View style={styles.quickActionsRow}>
-            {quickActions.map(action => (
-              <Button
-                key={action.key}
-                mode="text"
-                compact
-                onPress={() => handleQuickAction(action)}
-                style={styles.quickActionButton}
-                labelStyle={styles.quickActionLabel}
-                accessibilityLabel={`Quick add a shared plan for ${action.label.toLowerCase()}`}
-              >
-                {action.label}
-              </Button>
-            ))}
-          </View>
-          <View style={styles.weekdayHeaderRow}>
-            {WEEKDAY_LABELS.map(label => (
-              <Text key={label} style={styles.weekdayLabel}>
-                {label.slice(0, 1)}
-              </Text>
-            ))}
-          </View>
-          <View style={styles.gridWrap}>
-            {monthGrid.map((week, weekIndex) => (
-              <View key={`${visibleMonthKey}-${weekIndex}`} style={styles.weekRow}>
-                {week.map(day => {
-                  const selected = day.dateKey === selectedDateKey;
-                  const eventMeta = eventMetaByDate.get(day.dateKey);
-                  const eventCount = eventMeta?.count ?? 0;
-                  const dueCount = dueActionCountByDate.get(day.dateKey) ?? 0;
-                  const dayPreviewEvents = (dayEventsByDate.get(day.dateKey) ?? []).slice(0, 3);
-                  const overflowLabel = getDayOverflowLabel(eventCount);
-
-                  return (
-                    <Pressable
-                      key={day.dateKey}
-                      onPress={() => handleSelectDay(day.dateKey)}
-                      onLongPress={() => openCreateDialog(day.dateKey)}
-                      style={[
-                        styles.dayCell,
-                        selected && styles.dayCellSelected,
-                        day.isToday && styles.dayCellToday,
-                        dueCount > 0 && styles.dayCellDue,
-                        !day.inCurrentMonth && styles.dayCellOutsideMonth,
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel={getDayAccessibilityLabel(day, eventMeta, selected, dueCount)}
-                      accessibilityHint="Tap to open this day in the agenda. Long press to add a plan on this day."
-                      accessibilityState={{ selected }}
-                    >
-                      <View style={styles.dayHeaderRow}>
-                        <View
-                          style={[
-                            styles.dayNumberBadge,
-                            selected && styles.dayNumberBadgeSelected,
-                            day.isToday && !selected && styles.dayNumberBadgeToday,
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.dayNumber,
-                              selected && styles.dayNumberSelected,
-                              !day.inCurrentMonth && styles.dayNumberMuted,
-                            ]}
-                          >
-                            {day.dayNumber}
-                          </Text>
-                        </View>
-                        {overflowLabel ? (
-                          <Text style={[styles.dayOverflowCount, selected && styles.dayOverflowCountSelected]}>
-                            {overflowLabel}
-                          </Text>
-                        ) : null}
-                      </View>
-                      {dueCount > 0 ? (
-                        <View style={styles.dueMarkerRow}>
-                          <View style={[styles.dueMarkerPill, selected && styles.dueMarkerPillSelected]}>
-                            <Text style={[styles.dueMarkerText, selected && styles.dueMarkerTextSelected]}>
-                              Love due {dueCount}
-                            </Text>
-                          </View>
-                        </View>
-                      ) : null}
-                      <View style={styles.dayChipList}>
-                        {dayPreviewEvents.map(event => {
-                          const selectedDayStatus = getEventSelectedDayStatus(event, day.dateKey);
-                          const continuing = selectedDayStatus === 'Continues today' || selectedDayStatus === 'Ends today';
-
-                          return (
-                            <View
-                              key={`${day.dateKey}-${event.id}`}
-                              style={[
-                                styles.dayEventChip,
-                                event.allDay ? styles.dayEventChipAllDay : styles.dayEventChipTimed,
-                                continuing && styles.dayEventChipContinuing,
-                                selected && styles.dayEventChipSelected,
-                              ]}
-                            >
-                              <Text
-                                numberOfLines={1}
-                                style={[
-                                  styles.dayEventChipText,
-                                  event.allDay ? styles.dayEventChipTextAllDay : styles.dayEventChipTextTimed,
-                                  selected && styles.dayEventChipTextSelected,
-                                ]}
-                              >
-                                {getMonthChipLabel(event)}
-                              </Text>
-                            </View>
-                          );
-                        })}
-                      </View>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            ))}
-          </View>
-        </Surface>
-        <Card style={styles.agendaCard}>
-          <Card.Content>
-            <View style={styles.agendaHeaderRow}>
-              <View style={styles.agendaCopy}>
-                <Text variant="titleMedium" style={styles.cardTitle}>
-                  {formatSelectedDate(selectedDateKey)}
-                </Text>
-                <Text style={styles.agendaMeta}>{getAgendaLabel(selectedDayEvents.length)}</Text>
-              </View>
-              <View style={styles.agendaActionsRow}>
+        <View onLayout={registerSection('month')}>
+          <Surface style={styles.hero} elevation={1}>
+            <View style={styles.monthToolbar}>
+              <View style={styles.yearPill}>
                 <Button
                   mode="text"
-                  onPress={() => handleSelectDay(shiftDateKey(selectedDateKey, -1))}
-                  accessibilityLabel={`Show agenda for ${formatSelectedDate(shiftDateKey(selectedDateKey, -1))}`}
+                  compact
+                  onPress={() => setVisibleMonthKey(shiftMonth(visibleMonthKey, -1))}
+                  accessibilityLabel={`Show ${formatMonthTitle(shiftMonth(visibleMonthKey, -1))}`}
+                  style={styles.yearNavButton}
+                  labelStyle={styles.yearNavLabel}
                 >
-                  Prev day
+                  ‹
+                </Button>
+                <Text style={styles.yearPillText}>{parseMonthKey(visibleMonthKey).getFullYear()}</Text>
+                <Button
+                  mode="text"
+                  compact
+                  onPress={() => setVisibleMonthKey(shiftMonth(visibleMonthKey, 1))}
+                  accessibilityLabel={`Show ${formatMonthTitle(shiftMonth(visibleMonthKey, 1))}`}
+                  style={styles.yearNavButton}
+                  labelStyle={styles.yearNavLabel}
+                >
+                  ›
+                </Button>
+              </View>
+              <View style={styles.monthToolbarActions}>
+                <Button
+                  mode="outlined"
+                  compact
+                  onPress={() => {
+                    const todayKey = formatDateKey(new Date());
+                    setSelectedDateKey(todayKey);
+                    setVisibleMonthKey(todayKey.slice(0, 7));
+                  }}
+                  style={styles.todayButton}
+                  labelStyle={styles.toolbarButtonLabel}
+                  accessibilityLabel="Jump to today in the calendar"
+                >
+                  Today
                 </Button>
                 <Button
-                  mode="contained-tonal"
-                  onPress={() => openCreateDialog(selectedDateKey)}
-                  accessibilityLabel={`Add a plan on ${formatSelectedDate(selectedDateKey)}`}
+                  mode="contained"
+                  compact
+                  onPress={() => openCreateDialog()}
+                  style={styles.addPlanPill}
+                  labelStyle={styles.toolbarButtonLabel}
+                  accessibilityLabel="Add a shared calendar plan"
                 >
                   Add
                 </Button>
-                <Button
-                  mode="text"
-                  onPress={() => handleSelectDay(shiftDateKey(selectedDateKey, 1))}
-                  accessibilityLabel={`Show agenda for ${formatSelectedDate(shiftDateKey(selectedDateKey, 1))}`}
-                >
-                  Next day
-                </Button>
               </View>
             </View>
-            {selectedDayEvents.length === 0 ? (
-              <Surface style={styles.emptyAgenda} elevation={1}>
-                <Text variant="titleMedium" style={styles.emptyAgendaTitle}>
-                  Nothing planned yet
+            <Text variant="displaySmall" style={styles.monthDisplayTitle}>
+              {formatMonthName(visibleMonthKey)}
+            </Text>
+            <Text style={styles.monthDisplayMeta}>{getMonthSummaryLabel(selectedMonthEventsCount)}</Text>
+            <View style={styles.quickActionsRow}>
+              {quickActions.map(action => (
+                <Button
+                  key={action.key}
+                  mode="text"
+                  compact
+                  onPress={() => handleQuickAction(action)}
+                  style={styles.quickActionButton}
+                  labelStyle={styles.quickActionLabel}
+                  accessibilityLabel={`Quick add a shared plan for ${action.label.toLowerCase()}`}
+                >
+                  {action.label}
+                </Button>
+              ))}
+            </View>
+            <View style={styles.weekdayHeaderRow}>
+              {WEEKDAY_LABELS.map(label => (
+                <Text key={label} style={styles.weekdayLabel}>
+                  {label.slice(0, 1)}
                 </Text>
-                <Text style={styles.emptyAgendaBody}>
-                  Tap Add to anchor a date night, overnight reset, check-in, or shared ritual on this day.
-                </Text>
-              </Surface>
-            ) : (
-              <View style={styles.eventList}>
-                {selectedDayEvents.map(event => {
-                  const rangeLabel = getEventRangeLabel(event);
-                  const selectedDayStatus = getEventSelectedDayStatus(event, selectedDateKey);
+              ))}
+            </View>
+            <View style={styles.gridWrap}>
+              {monthGrid.map((week, weekIndex) => (
+                <View key={`${visibleMonthKey}-${weekIndex}`} style={styles.weekRow}>
+                  {week.map(day => {
+                    const selected = day.dateKey === selectedDateKey;
+                    const eventMeta = eventMetaByDate.get(day.dateKey);
+                    const eventCount = eventMeta?.count ?? 0;
+                    const dueCount = dueActionCountByDate.get(day.dateKey) ?? 0;
+                    const dayPreviewEvents = (dayEventsByDate.get(day.dateKey) ?? []).slice(0, 3);
+                    const overflowLabel = getDayOverflowLabel(eventCount);
 
-                  return (
-                    <Card key={event.id} style={styles.eventCard}>
+                    return (
+                      <Pressable
+                        key={day.dateKey}
+                        onPress={() => handleSelectDay(day.dateKey)}
+                        onLongPress={() => openCreateDialog(day.dateKey)}
+                        style={[
+                          styles.dayCell,
+                          selected && styles.dayCellSelected,
+                          day.isToday && styles.dayCellToday,
+                          dueCount > 0 && styles.dayCellDue,
+                          !day.inCurrentMonth && styles.dayCellOutsideMonth,
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={getDayAccessibilityLabel(day, eventMeta, selected, dueCount)}
+                        accessibilityHint="Tap to open this day in the agenda. Long press to add a plan on this day."
+                        accessibilityState={{ selected }}
+                      >
+                        <View style={styles.dayHeaderRow}>
+                          <View
+                            style={[
+                              styles.dayNumberBadge,
+                              selected && styles.dayNumberBadgeSelected,
+                              day.isToday && !selected && styles.dayNumberBadgeToday,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.dayNumber,
+                                selected && styles.dayNumberSelected,
+                                !day.inCurrentMonth && styles.dayNumberMuted,
+                              ]}
+                            >
+                              {day.dayNumber}
+                            </Text>
+                          </View>
+                          {overflowLabel ? (
+                            <Text style={[styles.dayOverflowCount, selected && styles.dayOverflowCountSelected]}>
+                              {overflowLabel}
+                            </Text>
+                          ) : null}
+                        </View>
+                        {dueCount > 0 ? (
+                          <View style={styles.dueMarkerRow}>
+                            <View style={[styles.dueMarkerPill, selected && styles.dueMarkerPillSelected]}>
+                              <Text style={[styles.dueMarkerText, selected && styles.dueMarkerTextSelected]}>
+                                Love due {dueCount}
+                              </Text>
+                            </View>
+                          </View>
+                        ) : null}
+                        <View style={styles.dayChipList}>
+                          {dayPreviewEvents.map(event => {
+                            const selectedDayStatus = getEventSelectedDayStatus(event, day.dateKey);
+                            const continuing = selectedDayStatus === 'Continues today' || selectedDayStatus === 'Ends today';
+
+                            return (
+                              <View
+                                key={`${day.dateKey}-${event.id}`}
+                                style={[
+                                  styles.dayEventChip,
+                                  event.allDay ? styles.dayEventChipAllDay : styles.dayEventChipTimed,
+                                  continuing && styles.dayEventChipContinuing,
+                                  selected && styles.dayEventChipSelected,
+                                ]}
+                              >
+                                <Text
+                                  numberOfLines={1}
+                                  style={[
+                                    styles.dayEventChipText,
+                                    event.allDay ? styles.dayEventChipTextAllDay : styles.dayEventChipTextTimed,
+                                    selected && styles.dayEventChipTextSelected,
+                                  ]}
+                                >
+                                  {getMonthChipLabel(event)}
+                                </Text>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ))}
+            </View>
+          </Surface>
+        </View>
+        <View onLayout={registerSection('agenda')}>
+          <Card style={styles.agendaCard}>
+            <Card.Content>
+              <View style={styles.agendaHeaderRow}>
+                <View style={styles.agendaCopy}>
+                  <Text variant="titleMedium" style={styles.cardTitle}>
+                    {formatSelectedDate(selectedDateKey)}
+                  </Text>
+                  <Text style={styles.agendaMeta}>{getAgendaLabel(selectedDayEvents.length)}</Text>
+                </View>
+                <View style={styles.agendaActionsRow}>
+                  <Button
+                    mode="text"
+                    onPress={() => handleSelectDay(shiftDateKey(selectedDateKey, -1))}
+                    accessibilityLabel={`Show agenda for ${formatSelectedDate(shiftDateKey(selectedDateKey, -1))}`}
+                  >
+                    Prev day
+                  </Button>
+                  <Button
+                    mode="contained-tonal"
+                    onPress={() => openCreateDialog(selectedDateKey)}
+                    accessibilityLabel={`Add a plan on ${formatSelectedDate(selectedDateKey)}`}
+                  >
+                    Add
+                  </Button>
+                  <Button
+                    mode="text"
+                    onPress={() => handleSelectDay(shiftDateKey(selectedDateKey, 1))}
+                    accessibilityLabel={`Show agenda for ${formatSelectedDate(shiftDateKey(selectedDateKey, 1))}`}
+                  >
+                    Next day
+                  </Button>
+                </View>
+              </View>
+              {selectedDayEvents.length === 0 ? (
+                <Surface style={styles.emptyAgenda} elevation={1}>
+                  <Text variant="titleMedium" style={styles.emptyAgendaTitle}>
+                    Nothing planned yet
+                  </Text>
+                  <Text style={styles.emptyAgendaBody}>
+                    Tap Add to anchor a date night, overnight reset, check-in, or shared ritual on this day.
+                  </Text>
+                </Surface>
+              ) : (
+                <View style={styles.eventList}>
+                  {selectedDayEvents.map(event => {
+                    const rangeLabel = getEventRangeLabel(event);
+                    const selectedDayStatus = getEventSelectedDayStatus(event, selectedDateKey);
+
+                    return (
+                      <Card key={event.id} style={styles.eventCard}>
+                        <Card.Content>
+                          <Pressable
+                            onPress={() => openEditDialog(event)}
+                            style={styles.eventPressable}
+                            accessibilityRole="button"
+                            accessibilityLabel={`${event.title}. ${formatEventTime(event)}.${selectedDayStatus ? ` ${selectedDayStatus}.` : ''}`}
+                            accessibilityHint="Open this shared plan to edit details."
+                          >
+                            <View style={styles.eventHeaderRow}>
+                              <View style={styles.eventTextWrap}>
+                                <View style={styles.eventTopLine}>
+                                  {selectedDayStatus ? <Text style={styles.eventStatus}>{selectedDayStatus}</Text> : null}
+                                  <Text style={styles.eventOwnerText}>
+                                    {event.createdByUserId === user?.uid ? 'You planned this' : event.createdByEmail}
+                                  </Text>
+                                </View>
+                                <Text variant="titleMedium" style={styles.eventTitle}>
+                                  {event.title}
+                                </Text>
+                                <View style={styles.eventBadgeRow}>
+                                  <View style={[styles.eventBadge, styles.eventPrimaryBadge]}>
+                                    <Text style={[styles.eventBadgeText, styles.eventPrimaryBadgeText]}>{formatEventTime(event)}</Text>
+                                  </View>
+                                  {rangeLabel ? (
+                                    <View style={styles.eventBadge}>
+                                      <Text style={styles.eventBadgeText}>{rangeLabel}</Text>
+                                    </View>
+                                  ) : null}
+                                </View>
+                              </View>
+                            </View>
+                            {!!event.note && (
+                              <Surface style={styles.eventNoteCard} elevation={0}>
+                                <Text style={styles.eventNote}>{event.note}</Text>
+                              </Surface>
+                            )}
+                            <Text style={styles.eventHint}>Tap to edit details</Text>
+                          </Pressable>
+                          <View style={styles.eventActionRow}>
+                            <Button mode="contained-tonal" onPress={() => openEditDialog(event)}>
+                              Open
+                            </Button>
+                            <Button
+                              mode="text"
+                              onPress={() => void handleDelete(event)}
+                              disabled={deletingEventId === event.id}
+                              loading={deletingEventId === event.id}
+                              accessibilityLabel={`Delete ${event.title}`}
+                            >
+                              Delete
+                            </Button>
+                          </View>
+                        </Card.Content>
+                      </Card>
+                    );
+                  })}
+                </View>
+              )}
+            </Card.Content>
+          </Card>
+        </View>
+        <View onLayout={registerSection('dueActions')}>
+          <Card style={styles.agendaCard}>
+            <Card.Content>
+              <View style={styles.agendaHeaderRow}>
+                <View style={styles.agendaCopy}>
+                  <Text variant="titleMedium" style={styles.cardTitle}>
+                    Love Actions due this day
+                  </Text>
+                  <Text style={styles.agendaMeta}>
+                    {selectedDayDueActions.length === 1 ? '1 Love Action is due.' : `${selectedDayDueActions.length} Love Actions are due.`}
+                  </Text>
+                </View>
+                <Button mode="contained-tonal" onPress={() => navigation.navigate('Love')}>
+                  Open Love
+                </Button>
+              </View>
+              {selectedDayDueActions.length === 0 ? (
+                <Surface style={styles.emptyAgenda} elevation={1}>
+                  <Text variant="titleMedium" style={styles.emptyAgendaTitle}>
+                    No Love Actions due here
+                  </Text>
+                  <Text style={styles.emptyAgendaBody}>
+                    When you schedule shared Love Actions with a due date, they will appear on the matching day here.
+                  </Text>
+                </Surface>
+              ) : (
+                <View style={styles.eventList}>
+                  {selectedDayDueActions.map(action => (
+                    <Card key={action.id} style={styles.eventCard}>
                       <Card.Content>
-                        <Pressable
-                          onPress={() => openEditDialog(event)}
-                          style={styles.eventPressable}
-                          accessibilityRole="button"
-                          accessibilityLabel={`${event.title}. ${formatEventTime(event)}.${selectedDayStatus ? ` ${selectedDayStatus}.` : ''}`}
-                          accessibilityHint="Open this shared plan to edit details."
-                        >
+                        <View style={styles.eventPressable}>
                           <View style={styles.eventHeaderRow}>
                             <View style={styles.eventTextWrap}>
                               <View style={styles.eventTopLine}>
-                                {selectedDayStatus ? (
-                                  <Text style={styles.eventStatus}>{selectedDayStatus}</Text>
-                                ) : null}
+                                <Text style={styles.eventStatus}>{action.status}</Text>
                                 <Text style={styles.eventOwnerText}>
-                                  {event.createdByUserId === user?.uid ? 'You planned this' : event.createdByEmail}
+                                  {action.responsibleUserId === user?.uid ? 'You are responsible' : action.responsibleUserEmail}
                                 </Text>
                               </View>
                               <Text variant="titleMedium" style={styles.eventTitle}>
-                                {event.title}
+                                {action.title}
                               </Text>
                               <View style={styles.eventBadgeRow}>
                                 <View style={[styles.eventBadge, styles.eventPrimaryBadge]}>
-                                  <Text style={[styles.eventBadgeText, styles.eventPrimaryBadgeText]}>{formatEventTime(event)}</Text>
+                                  <Text style={[styles.eventBadgeText, styles.eventPrimaryBadgeText]}>
+                                    {formatLoveActionDueLabel(action.nextDueAt)}
+                                  </Text>
                                 </View>
-                                {rangeLabel ? (
-                                  <View style={styles.eventBadge}>
-                                    <Text style={styles.eventBadgeText}>{rangeLabel}</Text>
-                                  </View>
-                                ) : null}
                               </View>
                             </View>
                           </View>
-                          {!!event.note && (
+                          {!!action.appreciationNote ? (
                             <Surface style={styles.eventNoteCard} elevation={0}>
-                              <Text style={styles.eventNote}>{event.note}</Text>
+                              <Text style={styles.eventNote}>{action.appreciationNote}</Text>
                             </Surface>
-                          )}
-                          <Text style={styles.eventHint}>Tap to edit details</Text>
-                        </Pressable>
-                        <View style={styles.eventActionRow}>
-                          <Button mode="contained-tonal" onPress={() => openEditDialog(event)}>
-                            Open
-                          </Button>
-                          <Button
-                            mode="text"
-                            onPress={() => void handleDelete(event)}
-                            disabled={deletingEventId === event.id}
-                            loading={deletingEventId === event.id}
-                            accessibilityLabel={`Delete ${event.title}`}
-                          >
-                            Delete
-                          </Button>
+                          ) : null}
                         </View>
                       </Card.Content>
                     </Card>
-                  );
-                })}
-              </View>
-            )}
-          </Card.Content>
-        </Card>
-        <Card style={styles.agendaCard}>
-          <Card.Content>
-            <View style={styles.agendaHeaderRow}>
-              <View style={styles.agendaCopy}>
-                <Text variant="titleMedium" style={styles.cardTitle}>
-                  Love Actions due this day
-                </Text>
-                <Text style={styles.agendaMeta}>
-                  {selectedDayDueActions.length === 1 ? '1 Love Action is due.' : `${selectedDayDueActions.length} Love Actions are due.`}
-                </Text>
-              </View>
-              <Button mode="contained-tonal" onPress={() => navigation.navigate('Love')}>
-                Open Love
-              </Button>
-            </View>
-            {selectedDayDueActions.length === 0 ? (
-              <Surface style={styles.emptyAgenda} elevation={1}>
-                <Text variant="titleMedium" style={styles.emptyAgendaTitle}>
-                  No Love Actions due here
-                </Text>
-                <Text style={styles.emptyAgendaBody}>
-                  When you schedule shared Love Actions with a due date, they will appear on the matching day here.
-                </Text>
-              </Surface>
-            ) : (
-              <View style={styles.eventList}>
-                {selectedDayDueActions.map(action => (
-                  <Card key={action.id} style={styles.eventCard}>
-                    <Card.Content>
-                      <View style={styles.eventPressable}>
-                        <View style={styles.eventHeaderRow}>
-                          <View style={styles.eventTextWrap}>
-                            <View style={styles.eventTopLine}>
-                              <Text style={styles.eventStatus}>{action.status}</Text>
-                              <Text style={styles.eventOwnerText}>
-                                {action.responsibleUserId === user?.uid ? 'You are responsible' : action.responsibleUserEmail}
-                              </Text>
-                            </View>
-                            <Text variant="titleMedium" style={styles.eventTitle}>
-                              {action.title}
-                            </Text>
-                            <View style={styles.eventBadgeRow}>
-                              <View style={[styles.eventBadge, styles.eventPrimaryBadge]}>
-                                <Text style={[styles.eventBadgeText, styles.eventPrimaryBadgeText]}>
-                                  {formatLoveActionDueLabel(action.nextDueAt)}
-                                </Text>
-                              </View>
-                            </View>
-                          </View>
-                        </View>
-                        {!!action.appreciationNote ? (
-                          <Surface style={styles.eventNoteCard} elevation={0}>
-                            <Text style={styles.eventNote}>{action.appreciationNote}</Text>
-                          </Surface>
-                        ) : null}
-                      </View>
-                    </Card.Content>
-                  </Card>
-                ))}
-              </View>
-            )}
-          </Card.Content>
-        </Card>
+                  ))}
+                </View>
+              )}
+            </Card.Content>
+          </Card>
+        </View>
         {syncing && <Text style={styles.syncText}>Syncing your shared calendar...</Text>}
       </ScrollView>
+      <JumpToSectionFab sections={visibleJumpSections} onSelectSection={handleJumpToSection} />
       <Portal>
         <Dialog
           visible={dialogVisible}
