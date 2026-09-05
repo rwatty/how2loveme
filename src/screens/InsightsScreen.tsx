@@ -216,6 +216,18 @@ function StatusPill({
   );
 }
 
+function MetricPill({
+  icon,
+  label,
+  wide,
+}: {
+  icon: string;
+  label: string;
+  wide?: boolean;
+}) {
+  return <StatusPill icon={icon} label={label} style={wide ? styles.metricPillWide : styles.metricPill} textStyle={styles.metricLabel} />;
+}
+
 function SectionHeading({
   section,
   title,
@@ -452,15 +464,15 @@ function InsightsTopSummaryCard({
       <View style={styles.topSummaryGrid}>
         <Surface style={styles.topSummaryStatCard} elevation={0}>
           <Text style={styles.topSummaryStatValue}>{streak}d</Text>
-          <Text style={styles.topSummaryStatLabel}>Check-in streak</Text>
+          <Text style={styles.topSummaryStatLabel}>Streak</Text>
         </Surface>
         <Surface style={styles.topSummaryStatCard} elevation={0}>
-          <Text style={styles.topSummaryStatValue}>{connected ? 'Connected' : 'Solo'}</Text>
-          <Text style={styles.topSummaryStatLabel}>Relationship mode</Text>
+          <Text style={styles.topSummaryStatValue}>{connected ? 'Shared' : 'Solo'}</Text>
+          <Text style={styles.topSummaryStatLabel}>Mode</Text>
         </Surface>
         <Surface style={styles.topSummaryStatCard} elevation={0}>
           <Text style={styles.topSummaryStatValue}>{weakestArea ?? 'Balanced'}</Text>
-          <Text style={styles.topSummaryStatLabel}>Area needing care</Text>
+          <Text style={styles.topSummaryStatLabel}>Care area</Text>
         </Surface>
       </View>
       <View style={styles.summaryRow}>
@@ -783,20 +795,14 @@ function InsightCard({
         </View>
         {showAuthor ? <Text style={styles.entryAuthor}>From {entry.createdByEmail}</Text> : null}
         <View style={styles.metricsRow}>
-          <View style={styles.metricPill}>
-            <Text style={styles.metricLabel}>Mood {entry.mood}/5</Text>
-          </View>
-          <View style={styles.metricPill}>
-            <Text style={styles.metricLabel}>Connection {entry.connection}/5</Text>
-          </View>
-          <View style={styles.metricPill}>
-            <Text style={styles.metricLabel}>Tension {entry.tension}/5</Text>
-          </View>
+          <MetricPill icon="emoticon-outline" label={`Mood ${entry.mood}/5`} />
+          <MetricPill icon="heart-outline" label={`Connection ${entry.connection}/5`} />
+          <MetricPill icon="lightning-bolt-outline" label={`Tension ${entry.tension}/5`} />
         </View>
         <Text style={styles.entryPreview}>{getInsightPreview(entry)}</Text>
-        {entry.appreciation ? <Text style={styles.entryDetail}>Appreciation: {entry.appreciation}</Text> : null}
-        {entry.need ? <Text style={styles.entryDetail}>Need: {entry.need}</Text> : null}
-        {entry.nextStep ? <Text style={styles.entryDetail}>Next step: {entry.nextStep}</Text> : null}
+        {entry.appreciation ? <Text style={styles.entryDetail}>Appreciation · {entry.appreciation}</Text> : null}
+        {entry.need ? <Text style={styles.entryDetail}>Need · {entry.need}</Text> : null}
+        {entry.nextStep ? <Text style={styles.entryDetail}>Next step · {entry.nextStep}</Text> : null}
         {shareEnabled && onShare && !isEditing ? (
           <Button
             mode="outlined"
@@ -1271,29 +1277,21 @@ export default function InsightsScreen() {
                 <Text style={styles.entryDetail}>{trendInterpretation.body}</Text>
                 <View style={styles.metricsRow}>
                   {trendInterpretation.supportPills.map(signal => (
-                    <View key={signal} style={styles.metricPill}>
-                      <Text style={styles.metricLabel}>{signal}</Text>
-                    </View>
+                    <MetricPill key={signal} icon="star-four-points-outline" label={signal} />
                   ))}
                 </View>
               </Surface>
               <View style={styles.metricsRow}>
-                <View style={styles.metricPill}>
-                  <Text style={styles.metricLabel}>Mood {displayAverageMood || 0}/5</Text>
-                </View>
-                <View style={styles.metricPill}>
-                  <Text style={styles.metricLabel}>Connection {displayAverageConnection || 0}/5</Text>
-                </View>
-                <View style={styles.metricPill}>
-                  <Text style={styles.metricLabel}>Tension {displayAverageTension || 0}/5</Text>
-                </View>
+                <MetricPill icon="emoticon-outline" label={`Mood ${displayAverageMood || 0}/5`} />
+                <MetricPill icon="heart-outline" label={`Connection ${displayAverageConnection || 0}/5`} />
+                <MetricPill icon="lightning-bolt-outline" label={`Tension ${displayAverageTension || 0}/5`} />
               </View>
               <Text style={styles.archiveMeta}>
                 {latestSnapshot
-                  ? `${latestSnapshot.capturedDay} snapshot loaded for the current ${getWindowLabel(scoreWindow)} window.`
+                  ? `${latestSnapshot.capturedDay} snapshot loaded for this ${getWindowLabel(scoreWindow)} window.`
                   : pulseSummary.recentReflectionCount === 0
-                    ? 'No recent shared reflections are feeding the pulse yet. Save or share a check-in below to start building your history.'
-                    : `${pulseSummary.recentReflectionCount} recent reflections and ${scoreBreakdown.measuredNotes.length} Love Notes are informing this live pulse.`}
+                    ? 'No recent shared reflections yet. Save or share a check-in below to start the pulse history.'
+                    : `${pulseSummary.recentReflectionCount} reflections and ${scoreBreakdown.measuredNotes.length} Love Notes are shaping this pulse.`}
               </Text>
               </Card.Content>
             </Card>
@@ -1320,42 +1318,24 @@ export default function InsightsScreen() {
                 />
               </Surface>
               <View style={styles.metricsRow}>
-                <View style={styles.metricPill}>
-                  <Text style={styles.metricLabel}>Score {Math.round(displayScore)}/100</Text>
-                </View>
-                <View style={styles.metricPill}>
-                  <Text style={styles.metricLabel}>Completed {scoreBreakdown.completedActions.length}</Text>
-                </View>
-                <View style={styles.metricPill}>
-                  <Text style={styles.metricLabel}>Appreciated {scoreBreakdown.appreciatedActions.length}</Text>
-                </View>
+                <MetricPill icon="chart-line" label={`Score ${Math.round(displayScore)}/100`} />
+                <MetricPill icon="check-circle-outline" label={`Completed ${scoreBreakdown.completedActions.length}`} />
+                <MetricPill icon="hand-heart-outline" label={`Appreciated ${scoreBreakdown.appreciatedActions.length}`} />
               </View>
               <View style={styles.metricsRow}>
-                <View style={styles.metricPill}>
-                  <Text style={styles.metricLabel}>Action reliability {Math.round(scoreBreakdown.actionReliability)}%</Text>
-                </View>
-                <View style={styles.metricPill}>
-                  <Text style={styles.metricLabel}>Reflection depth {Math.round(scoreBreakdown.reflectionScore)}%</Text>
-                </View>
-                <View style={styles.metricPill}>
-                  <Text style={styles.metricLabel}>Love Note care {Math.round(scoreBreakdown.noteCareScore)}%</Text>
-                </View>
+                <MetricPill icon="check-decagram-outline" label={`Reliability ${Math.round(scoreBreakdown.actionReliability)}%`} />
+                <MetricPill icon="notebook-edit-outline" label={`Reflection ${Math.round(scoreBreakdown.reflectionScore)}%`} />
+                <MetricPill icon="heart-plus-outline" label={`Love Notes ${Math.round(scoreBreakdown.noteCareScore)}%`} />
               </View>
               <View style={styles.metricsRow}>
-                <View style={styles.metricPill}>
-                  <Text style={styles.metricLabel}>Appreciation loop {Math.round(scoreBreakdown.appreciationScore)}%</Text>
-                </View>
-                <View style={styles.metricPill}>
-                  <Text style={styles.metricLabel}>Emotional presence {Math.round(scoreBreakdown.emotionalPresenceScore)}%</Text>
-                </View>
-                <View style={styles.metricPill}>
-                  <Text style={styles.metricLabel}>Shared reflection ratio {Math.round(scoreBreakdown.sharedReflectionRatio)}%</Text>
-                </View>
+                <MetricPill icon="gesture-tap-button" label={`Appreciation ${Math.round(scoreBreakdown.appreciationScore)}%`} />
+                <MetricPill icon="emoticon-heart-outline" label={`Presence ${Math.round(scoreBreakdown.emotionalPresenceScore)}%`} />
+                <MetricPill icon="account-group-outline" label={`Shared ${Math.round(scoreBreakdown.sharedReflectionRatio)}%`} />
               </View>
               <Text style={styles.archiveMeta}>
                 {scoreBreakdown.measuredActions.length === 0 && scoreBreakdown.measuredInsights.length === 0 && scoreBreakdown.measuredNotes.length === 0
-                  ? `No shared signals are feeding this ${getWindowLabel(scoreWindow)} score yet.`
-                  : `${scoreBreakdown.measuredActions.length} Love Actions, ${scoreBreakdown.measuredInsights.length} reflections, and ${scoreBreakdown.measuredNotes.length} Love Notes are shaping this ${getWindowLabel(scoreWindow)} score.`}
+                  ? `No shared signals are shaping this ${getWindowLabel(scoreWindow)} score yet.`
+                  : `${scoreBreakdown.measuredActions.length} Love Actions, ${scoreBreakdown.measuredInsights.length} reflections, and ${scoreBreakdown.measuredNotes.length} Love Notes are shaping this score.`}
               </Text>
               <Surface style={styles.explanationCard} elevation={0}>
                 <View style={styles.scoreComponentHeader}>
@@ -1489,30 +1469,20 @@ export default function InsightsScreen() {
                             <Text style={styles.entryDetail}>{recommendation.reason}</Text>
                           </Surface>
                           <View style={styles.metricsRow}>
-                            <View style={styles.metricPill}>
-                              <Text style={styles.metricLabel}>{recommendation.signal}</Text>
-                            </View>
+                            <MetricPill icon="signal" label={recommendation.signal} />
                             {recommendation.area ? (
-                              <View style={styles.metricPill}>
-                                <Text style={styles.metricLabel}>Area {LOVE_AREA_LABELS[recommendation.area]}</Text>
-                              </View>
+                              <MetricPill icon="map-marker-outline" label={LOVE_AREA_LABELS[recommendation.area]} />
                             ) : null}
                             {recommendation.noteType ? (
-                              <View style={styles.metricPill}>
-                                <Text style={styles.metricLabel}>Tone {LOVE_NOTE_TYPE_LABELS[recommendation.noteType]}</Text>
-                              </View>
+                              <MetricPill icon="message-text-outline" label={LOVE_NOTE_TYPE_LABELS[recommendation.noteType]} />
                             ) : null}
-                            {prompt ? (
-                              <View style={styles.metricPill}>
-                                <Text style={styles.metricLabel}>Prompt {prompt.label}</Text>
-                              </View>
-                            ) : null}
+                            {prompt ? <MetricPill icon="lightbulb-outline" label={prompt.label} /> : null}
                             {recommendation.suggestedAction ? (
-                              <View style={styles.metricPillWide}>
-                                <Text style={styles.metricLabel}>
-                                  Action {getCoachingSuggestionLabel(recommendation.suggestedAction)}
-                                </Text>
-                              </View>
+                              <MetricPill
+                                icon="rocket-launch-outline"
+                                label={getCoachingSuggestionLabel(recommendation.suggestedAction) ?? 'Suggested action'}
+                                wide
+                              />
                             ) : null}
                           </View>
                           <Button mode="contained-tonal" onPress={() => handleRecommendationPress(recommendation)} style={styles.shareButton}>
@@ -1532,9 +1502,7 @@ export default function InsightsScreen() {
                 <Text variant="titleMedium" style={styles.cardTitle}>
                   Recent follow-through
                 </Text>
-                <Text style={styles.sectionMeta}>
-                  The most recent completions and appreciations influencing today’s score.
-                </Text>
+                <Text style={styles.sectionMeta}>Recent completions and appreciations shaping today’s score.</Text>
               </View>
               <View style={styles.entryList}>
                 {recentRelationshipFollowThrough.length === 0 ? (
@@ -1555,15 +1523,9 @@ export default function InsightsScreen() {
                           </View>
                         </View>
                         <View style={styles.metricsRow}>
-                          <View style={styles.metricPill}>
-                            <Text style={styles.metricLabel}>Due {formatLoveActionMetricDate(action.nextDueAt)}</Text>
-                          </View>
-                          <View style={styles.metricPill}>
-                            <Text style={styles.metricLabel}>Confirmed {action.confirmationReaction ?? '—'}</Text>
-                          </View>
-                          <View style={styles.metricPill}>
-                            <Text style={styles.metricLabel}>Appreciated {action.appreciationReaction ?? '—'}</Text>
-                          </View>
+                          <MetricPill icon="calendar-clock-outline" label={`Due ${formatLoveActionMetricDate(action.nextDueAt)}`} />
+                          <MetricPill icon="check-circle-outline" label={`Confirmed ${action.confirmationReaction ?? '—'}`} />
+                          <MetricPill icon="hand-heart-outline" label={`Appreciated ${action.appreciationReaction ?? '—'}`} />
                         </View>
                         {!!action.confirmationNote ? (
                           <Text style={styles.entryDetail}>Confirmation note: {action.confirmationNote}</Text>
@@ -1584,9 +1546,7 @@ export default function InsightsScreen() {
                 <Text variant="titleMedium" style={styles.cardTitle}>
                   Relationship area balance
                 </Text>
-                <Text style={styles.sectionMeta}>
-                  Which kinds of care are actually being confirmed or appreciated in this window.
-                </Text>
+                <Text style={styles.sectionMeta}>Which kinds of care are landing in this window.</Text>
               </View>
               <View style={styles.entryList}>
                 {areaBalance.length === 0 ? (
@@ -2029,6 +1989,7 @@ const styles = StyleSheet.create({
   },
   topSummaryStatCard: {
     flex: 1,
+    minWidth: 0,
     borderRadius: 18,
     backgroundColor: '#FFF8F3',
     borderWidth: 1,
@@ -2039,13 +2000,14 @@ const styles = StyleSheet.create({
   },
   topSummaryStatValue: {
     color: '#3F2831',
-    fontSize: 16,
+    fontSize: 15,
+    lineHeight: 19,
     fontWeight: '700',
   },
   topSummaryStatLabel: {
     color: '#8F6B74',
-    fontSize: 11,
-    lineHeight: 15,
+    fontSize: 10,
+    lineHeight: 14,
     fontWeight: '600',
   },
   summaryPill: {
@@ -2155,6 +2117,7 @@ const styles = StyleSheet.create({
   },
   sectionHeaderCopy: {
     flex: 1,
+    minWidth: 0,
     gap: 2,
   },
   sectionMeta: {
