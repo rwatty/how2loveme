@@ -17,7 +17,15 @@ import {
   TextInput,
 } from 'react-native-paper';
 import MirrorCanvas from '../MirrorCanvas';
-import { LOVE_NOTE_PROMPTS } from '../lib/loveNotes';
+import {
+  LOVE_NOTE_PROMPTS,
+  LOVE_NOTE_TAG_LABELS,
+  LOVE_NOTE_TAGS,
+  LOVE_NOTE_TYPE_LABELS,
+  LOVE_NOTE_TYPES,
+  type LoveNoteTag,
+  type LoveNoteType,
+} from '../lib/loveNotes';
 import {
   LOVE_AREAS,
   LOVE_AREA_LABELS,
@@ -240,6 +248,9 @@ export default function LoveScreen() {
   const pendingNotePromptId = useLoveDraftStore(state => state.pendingNotePromptId);
   const clearQueuedDraft = useLoveDraftStore(state => state.clear);
   const [messageText, setMessageText] = useState(DEFAULT_MESSAGE);
+  const [noteType, setNoteType] = useState<LoveNoteType>('warm');
+  const [noteTags, setNoteTags] = useState<LoveNoteTag[]>(['reconnection']);
+  const [selectedPromptId, setSelectedPromptId] = useState<string | null>(null);
   const [strokes, setStrokes] = useState<MirrorStroke[]>([]);
   const [sending, setSending] = useState(false);
   const [mirrorGestureActive, setMirrorGestureActive] = useState(false);
@@ -287,6 +298,23 @@ export default function LoveScreen() {
     [messages, user?.uid],
   );
   const recentLoveNotes = useMemo(() => messages.slice(0, 3), [messages]);
+  const noteTypeCounts = useMemo(
+    () =>
+      messages.reduce<Record<LoveNoteType, number>>(
+        (counts, message) => ({
+          ...counts,
+          [message.noteType]: counts[message.noteType] + 1,
+        }),
+        {
+          warm: 0,
+          playful: 0,
+          reassuring: 0,
+          grateful: 0,
+          desire: 0,
+        },
+      ),
+    [messages],
+  );
   const librarySearchQuery = librarySearch.trim().toLowerCase();
   const featuredLibraryItems = useMemo(() => LOVE_LIBRARY_ITEMS.filter(item => item.featured), []);
   const filteredLibraryItems = useMemo(
@@ -326,8 +354,25 @@ export default function LoveScreen() {
       return;
     }
 
+    setSelectedPromptId(prompt.id);
+    setNoteType(prompt.tone);
+    setNoteTags(prompt.tags);
     setMessageText(prompt.starter);
     setSnackbar(`${prompt.label} loaded into your Love Note.`);
+  };
+
+  const toggleNoteTag = (tag: LoveNoteTag) => {
+    setNoteTags(current => {
+      if (current.includes(tag)) {
+        return current.filter(value => value !== tag);
+      }
+
+      if (current.length >= 4) {
+        return current;
+      }
+
+      return [...current, tag];
+    });
   };
 
   useEffect(() => {
@@ -375,8 +420,14 @@ export default function LoveScreen() {
       await sendMirrorMessage(user, {
         text: trimmedMessage,
         strokes,
+        noteType,
+        tags: noteTags,
+        promptId: selectedPromptId,
       });
       setMessageText(DEFAULT_MESSAGE);
+      setNoteType('warm');
+      setNoteTags(['reconnection']);
+      setSelectedPromptId(null);
       setStrokes([]);
       setSnackbar('Your Love Note is now syncing to Home.');
       navigation.navigate('Home');
@@ -389,6 +440,7 @@ export default function LoveScreen() {
 
   const handleResetMirror = () => {
     setMessageText('');
+    setSelectedPromptId(null);
     setStrokes([]);
   };
 
@@ -1185,21 +1237,29 @@ export default function LoveScreen() {
               <View style={styles.summaryPill}>
                 <Text style={styles.summaryLabel}>Prompts {LOVE_NOTE_PROMPTS.length}</Text>
               </View>
+              <View style={styles.summaryPill}>
+                <Text style={styles.summaryLabel}>Warm {noteTypeCounts.warm}</Text>
+              </View>
             </View>
             <View style={styles.stack}>
               <Text style={styles.choiceLabel}>Prompt starters</Text>
               <View style={styles.choiceRow}>
-                {LOVE_NOTE_PROMPTS.map(prompt => (
-                  <Button
-                    key={prompt.id}
-                    mode="outlined"
-                    compact
-                    onPress={() => loadNotePrompt(prompt.id)}
-                    style={styles.choiceButton}
-                  >
-                    {prompt.label}
-                  </Button>
-                ))}
+                {LOVE_NOTE_PROMPTS.map(prompt => {
+                  const selected = selectedPromptId === prompt.id;
+                  return (
+                    <Button
+                      key={prompt.id}
+                      mode={selected ? 'contained' : 'outlined'}
+                      compact
+                      onPress={() => loadNotePrompt(prompt.id)}
+                      style={styles.choiceButton}
+                      buttonColor={selected ? '#B25B63' : undefined}
+                      textColor={selected ? '#FFF8F3' : '#5B4148'}
+                    >
+                      {prompt.label}
+                    </Button>
+                  );
+                })}
               </View>
             </View>
             <MirrorCanvas
@@ -1230,10 +1290,42 @@ export default function LoveScreen() {
                 activeOutlineColor="#D79395"
                 placeholder="Come closer tonight."
               />
+              <ChoiceGroup
+                label="Note type"
+                value={noteType}
+                options={LOVE_NOTE_TYPES.map(type => ({ value: type, label: LOVE_NOTE_TYPE_LABELS[type] }))}
+                onChange={value => {
+                  setNoteType(value as LoveNoteType);
+                  setSelectedPromptId(null);
+                }}
+              />
+              <View style={styles.choiceGroup}>
+                <Text style={styles.choiceLabel}>Tags</Text>
+                <View style={styles.choiceRow}>
+                  {LOVE_NOTE_TAGS.map(tag => {
+                    const selected = noteTags.includes(tag);
+                    return (
+                      <Button
+                        key={tag}
+                        mode={selected ? 'contained' : 'outlined'}
+                        compact
+                        onPress={() => toggleNoteTag(tag)}
+                        style={styles.choiceButton}
+                        buttonColor={selected ? '#B25B63' : undefined}
+                        textColor={selected ? '#FFF8F3' : '#5B4148'}
+                      >
+                        {LOVE_NOTE_TAG_LABELS[tag]}
+                      </Button>
+                    );
+                  })}
+                </View>
+              </View>
               <HelperText type="info" visible>
-                {strokes.length > 0
-                  ? 'Trace a heart, initials, or a soft flourish with your finger on the fog.'
-                  : 'Type the note, then use your finger to add a personal wipe, heart, or handwritten accent.'}
+                {selectedPromptId
+                  ? `Prompt loaded · ${LOVE_NOTE_TYPE_LABELS[noteType]} · ${noteTags.map(tag => LOVE_NOTE_TAG_LABELS[tag]).join(' · ') || 'No tags'}`
+                  : strokes.length > 0
+                    ? 'Trace a heart, initials, or a soft flourish with your finger on the fog.'
+                    : 'Type the note, then use your finger to add a personal wipe, heart, or handwritten accent.'}
               </HelperText>
               <Text style={styles.characterCount}>{trimmedMessage.length}/{MAX_MESSAGE_LENGTH}</Text>
               <View style={styles.actionsRow}>
@@ -1273,6 +1365,9 @@ export default function LoveScreen() {
                       <Text style={styles.listTitle}>{message.text || 'Finger-drawn Love Note'}</Text>
                       <Text style={styles.listMeta}>
                         {message.senderId === user?.uid ? 'From you' : `From ${message.senderEmail}`}
+                      </Text>
+                      <Text style={styles.listMeta}>
+                        {LOVE_NOTE_TYPE_LABELS[message.noteType]} · {message.tags.map(tag => LOVE_NOTE_TAG_LABELS[tag]).join(' · ') || 'No tags'}
                       </Text>
                       <Text style={styles.listMeta}>{new Date(message.createdAt).toLocaleString()}</Text>
                     </Surface>

@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
+import type { LoveNoteTag, LoveNoteType } from '../lib/loveNotes';
 
 export type MirrorPoint = {
   x: number;
@@ -17,6 +18,9 @@ export type MirrorMessage = {
   revealProgress: number;
   senderId: string;
   senderEmail: string;
+  noteType: LoveNoteType;
+  tags: LoveNoteTag[];
+  promptId: string | null;
 };
 
 type MirrorMessageState = {

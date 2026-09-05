@@ -17,11 +17,20 @@ import {
   TextInput,
 } from 'react-native-paper';
 import {
+  buildAreaBalance,
+  buildHistoryFeed,
+  buildPulseSummary,
+  buildScoreBreakdown,
+  getMetricsWindowStart,
+  type MetricsWindow,
+} from '../lib/relationshipMetrics';
+import {
   deleteInsightEntry,
   saveInsightEntry,
   shareInsightEntry,
   updateInsightEntry,
 } from '../lib/relationshipSync';
+import { LOVE_AREA_LABELS } from '../lib/loveLibrary';
 import { MainTabParamList } from '../navigation/MainNavigator';
 import {
   useInsightsStore,
@@ -29,6 +38,7 @@ import {
   type InsightVisibility,
 } from '../store/useInsightsStore';
 import { useLoveActionStore } from '../store/useLoveActionStore';
+import { useMirrorMessageStore } from '../store/useMirrorMessageStore';
 import { useRelationshipStore } from '../store/useRelationshipStore';
 
 function formatInsightDate(createdAt: number) {
@@ -70,6 +80,32 @@ function getInsightPreview(entry: InsightEntry) {
   return entry.reflection || entry.appreciation || entry.need || entry.nextStep || 'Saved insight';
 }
 
+function getPulseLabelCopy(label: 'strained' | 'fragile' | 'steady' | 'warming' | 'deepening') {
+  switch (label) {
+    case 'deepening':
+      return 'You have meaningful follow-through, lower tension, and stronger recent connection.';
+    case 'warming':
+      return 'Things are trending gentler and more connected, even if they are not effortless yet.';
+    case 'steady':
+      return 'The relationship pulse looks stable right now, with room to keep building warmth.';
+    case 'fragile':
+      return 'Connection is still present, but the pulse looks vulnerable and could use care soon.';
+    default:
+      return 'Recent signals show strain or low follow-through. Slow repair and steady check-ins matter most here.';
+  }
+}
+
+function getPulseTrendLabel(trend: 'rising' | 'steady' | 'dipping') {
+  switch (trend) {
+    case 'rising':
+      return 'Rising';
+    case 'dipping':
+      return 'Dipping';
+    default:
+      return 'Steady';
+  }
+}
+
 function formatLoveActionMetricDate(timestamp: number | null) {
   if (!timestamp) {
     return 'No date yet';
@@ -92,8 +128,6 @@ type EntryContext = {
   source: 'private' | 'shared';
   linkedPrivateEntryId?: string | null;
 };
-
-type ScoreWindow = '7d' | '30d';
 
 function RatingField({
   label,
@@ -242,6 +276,7 @@ export default function InsightsScreen() {
   const privateEntries = useInsightsStore(state => state.privateEntries);
   const sharedEntries = useInsightsStore(state => state.sharedEntries);
   const loveActions = useLoveActionStore(state => state.actions);
+  const loveNotes = useMirrorMessageStore(state => state.messages);
   const [mood, setMood] = useState(3);
   const [connection, setConnection] = useState(3);
   const [tension, setTension] = useState(2);
@@ -251,7 +286,7 @@ export default function InsightsScreen() {
   const [nextStep, setNextStep] = useState('');
   const [visibility, setVisibility] = useState<InsightVisibility>(profile?.coupleId ? 'decideLater' : 'private');
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>('private');
-  const [scoreWindow, setScoreWindow] = useState<ScoreWindow>('7d');
+  const [scoreWindow, setScoreWindow] = useState<MetricsWindow>('7d');
   const [editingContext, setEditingContext] = useState<EntryContext | null>(null);
   const [deleteContext, setDeleteContext] = useState<EntryContext | null>(null);
   const [saving, setSaving] = useState(false);
@@ -290,57 +325,52 @@ export default function InsightsScreen() {
         return sharedEntries;
     }
   }, [archiveFilter, laterEntries, privateOnlyEntries, sharedEntries]);
-  const scoreWindowStart = useMemo(() => {
-    const now = Date.now();
-    return now - (scoreWindow === '7d' ? 7 : 30) * 24 * 60 * 60 * 1000;
-  }, [scoreWindow]);
-  const connectionScoreActions = useMemo(
+  const scoreWindowStart = useMemo(() => getMetricsWindowStart(scoreWindow), [scoreWindow]);
+  const scoreBreakdown = useMemo(
     () =>
-      loveActions.filter(action => {
-        if (
-          action.status !== 'scheduled'
-          && action.status !== 'due'
-          && action.status !== 'performed'
-          && action.status !== 'confirmed'
-          && action.status !== 'appreciated'
-        ) {
-          return false;
-        }
-
-        const scoreTimestamp = action.lastCompletedAt ?? action.nextDueAt ?? action.updatedAt;
-        return scoreTimestamp >= scoreWindowStart;
+      buildScoreBreakdown({
+        actions: loveActions,
+        insights: [...privateEntries, ...sharedEntries],
+        notes: loveNotes,
+        windowStart: scoreWindowStart,
       }),
+    [loveActions, loveNotes, privateEntries, scoreWindowStart, sharedEntries],
+  );
+  const pulseSummary = useMemo(
+    () =>
+      buildPulseSummary({
+        entries: [...privateEntries, ...sharedEntries],
+        score: scoreBreakdown.score,
+        windowStart: scoreWindowStart,
+      }),
+    [privateEntries, scoreBreakdown.score, scoreWindowStart, sharedEntries],
+  );
+  const areaBalance = useMemo(
+    () => buildAreaBalance(loveActions, scoreWindowStart),
     [loveActions, scoreWindowStart],
   );
-  const completedLoveActions = useMemo(
+  const historyFeed = useMemo(
     () =>
-      connectionScoreActions.filter(
-        action => action.status === 'performed' || action.status === 'confirmed' || action.status === 'appreciated',
-      ),
-    [connectionScoreActions],
+      buildHistoryFeed({
+        actions: loveActions,
+        insights: [...privateEntries, ...sharedEntries],
+        notes: loveNotes,
+        windowStart: scoreWindowStart,
+      }),
+    [loveActions, loveNotes, privateEntries, scoreWindowStart, sharedEntries],
   );
-  const appreciatedLoveActions = useMemo(
-    () => connectionScoreActions.filter(action => action.status === 'appreciated'),
-    [connectionScoreActions],
-  );
-  const connectionScore = useMemo(() => {
-    if (connectionScoreActions.length === 0) {
-      return 0;
-    }
-
-    const completedRatio = completedLoveActions.length / connectionScoreActions.length;
-    const appreciatedRatio = appreciatedLoveActions.length / connectionScoreActions.length;
-
-    return Math.round(Math.min(100, completedRatio * 70 + appreciatedRatio * 30) * 100) / 100;
-  }, [appreciatedLoveActions.length, completedLoveActions.length, connectionScoreActions.length]);
   const recentRelationshipFollowThrough = useMemo(
     () =>
-      completedLoveActions
+      scoreBreakdown.completedActions
         .slice()
         .sort((left, right) => (right.lastCompletedAt ?? right.updatedAt) - (left.lastCompletedAt ?? left.updatedAt))
         .slice(0, 5),
-    [completedLoveActions],
+    [scoreBreakdown.completedActions],
   );
+  const connectionScore = scoreBreakdown.score;
+  const connectionScoreActions = scoreBreakdown.measuredActions;
+  const completedLoveActions = scoreBreakdown.completedActions;
+  const appreciatedLoveActions = scoreBreakdown.appreciatedActions;
   const loadingCopy = !hydrated || relationshipSyncing || syncingPrivate || syncingShared;
   const canSubmit = hydrated && writtenCount > 0 && !saving;
 
@@ -543,7 +573,13 @@ export default function InsightsScreen() {
             <Text style={styles.summaryLabel}>Shared {sharedEntries.length}</Text>
           </View>
           <View style={styles.summaryPill}>
+            <Text style={styles.summaryLabel}>Pulse {pulseSummary.label}</Text>
+          </View>
+          <View style={styles.summaryPill}>
             <Text style={styles.summaryLabel}>Score {Math.round(connectionScore)}</Text>
+          </View>
+          <View style={styles.summaryPill}>
+            <Text style={styles.summaryLabel}>Streak {pulseSummary.checkInStreakDays}d</Text>
           </View>
           <View style={styles.summaryPill}>
             <Text style={styles.summaryLabel}>{profile?.coupleId ? 'Connected' : 'Solo'}</Text>
@@ -570,19 +606,60 @@ export default function InsightsScreen() {
           <Card.Content>
             <View style={styles.sectionHeader}>
               <Text variant="titleMedium" style={styles.cardTitle}>
+                Relationship pulse
+              </Text>
+              <Text style={styles.sectionMeta}>
+                A blended read on your recent reflections, tension, connection, and follow-through.
+              </Text>
+            </View>
+            <View style={styles.metricsRow}>
+              <View style={styles.metricPill}>
+                <Text style={styles.metricLabel}>Pulse {pulseSummary.label}</Text>
+              </View>
+              <View style={styles.metricPill}>
+                <Text style={styles.metricLabel}>Trend {getPulseTrendLabel(pulseSummary.trend)}</Text>
+              </View>
+              <View style={styles.metricPill}>
+                <Text style={styles.metricLabel}>Streak {pulseSummary.checkInStreakDays} days</Text>
+              </View>
+            </View>
+            <Text style={styles.archiveMeta}>{getPulseLabelCopy(pulseSummary.label)}</Text>
+            <View style={styles.metricsRow}>
+              <View style={styles.metricPill}>
+                <Text style={styles.metricLabel}>Mood {pulseSummary.averageMood || 0}/5</Text>
+              </View>
+              <View style={styles.metricPill}>
+                <Text style={styles.metricLabel}>Connection {pulseSummary.averageConnection || 0}/5</Text>
+              </View>
+              <View style={styles.metricPill}>
+                <Text style={styles.metricLabel}>Tension {pulseSummary.averageTension || 0}/5</Text>
+              </View>
+            </View>
+            <Text style={styles.archiveMeta}>
+              {pulseSummary.recentReflectionCount === 0
+                ? 'No recent reflections are feeding the pulse yet. Save a check-in below to start building your history.'
+                : `${pulseSummary.recentReflectionCount} recent reflections and ${scoreBreakdown.measuredNotes.length} Love Notes are informing this pulse.`}
+            </Text>
+          </Card.Content>
+        </Card>
+        <Card style={styles.archiveCard}>
+          <Card.Content>
+            <View style={styles.sectionHeader}>
+              <Text variant="titleMedium" style={styles.cardTitle}>
                 Connection Score
               </Text>
               <Text style={styles.sectionMeta}>
-                A starting score based on shared Love Action follow-through, confirmation, and appreciation.
+                A fuller score based on Love Action follow-through, appreciation, shared reflections, tension relief, and Love Note momentum.
               </Text>
             </View>
             <Surface style={styles.segmentedWrap} elevation={0}>
               <SegmentedButtons
                 value={scoreWindow}
-                onValueChange={nextValue => setScoreWindow(nextValue as ScoreWindow)}
+                onValueChange={nextValue => setScoreWindow(nextValue as MetricsWindow)}
                 buttons={[
                   { value: '7d', label: 'Last 7 days' },
                   { value: '30d', label: 'Last 30 days' },
+                  { value: '90d', label: 'Last 90 days' },
                 ]}
                 style={styles.archiveFilterSelector}
                 theme={{ roundness: 999 }}
@@ -599,10 +676,21 @@ export default function InsightsScreen() {
                 <Text style={styles.metricLabel}>Appreciated {appreciatedLoveActions.length}</Text>
               </View>
             </View>
+            <View style={styles.metricsRow}>
+              <View style={styles.metricPill}>
+                <Text style={styles.metricLabel}>Action follow-through {Math.round(scoreBreakdown.actionCoverage)}%</Text>
+              </View>
+              <View style={styles.metricPill}>
+                <Text style={styles.metricLabel}>Appreciation {Math.round(scoreBreakdown.appreciationCoverage)}%</Text>
+              </View>
+              <View style={styles.metricPill}>
+                <Text style={styles.metricLabel}>Note momentum {Math.round(scoreBreakdown.noteMomentum)}%</Text>
+              </View>
+            </View>
             <Text style={styles.archiveMeta}>
               {connectionScoreActions.length === 0
-                ? `No shared Love Actions are feeding this ${scoreWindow === '7d' ? '7-day' : '30-day'} score yet. Once shared actions are scheduled and completed, Insights will start reflecting them here.`
-                : `${connectionScoreActions.length} shared Love Actions are currently contributing to this ${scoreWindow === '7d' ? '7-day' : '30-day'} score.`}
+                ? `No shared Love Actions are feeding this ${scoreWindow === '7d' ? '7-day' : scoreWindow === '30d' ? '30-day' : '90-day'} score yet. Once shared actions are scheduled and completed, Insights will start reflecting them here.`
+                : `${connectionScoreActions.length} shared Love Actions, ${scoreBreakdown.measuredInsights.length} reflections, and ${scoreBreakdown.measuredNotes.length} Love Notes are contributing to this ${scoreWindow === '7d' ? '7-day' : scoreWindow === '30d' ? '30-day' : '90-day'} score.`}
             </Text>
             <View style={styles.entryList}>
               {recentRelationshipFollowThrough.length === 0 ? (
@@ -639,6 +727,77 @@ export default function InsightsScreen() {
                       {!!action.appreciationNote ? (
                         <Text style={styles.entryDetail}>Appreciation note: {action.appreciationNote}</Text>
                       ) : null}
+                    </Card.Content>
+                  </Card>
+                ))
+              )}
+            </View>
+          </Card.Content>
+        </Card>
+        <Card style={styles.archiveCard}>
+          <Card.Content>
+            <View style={styles.sectionHeader}>
+              <Text variant="titleMedium" style={styles.cardTitle}>
+                Relationship area balance
+              </Text>
+              <Text style={styles.sectionMeta}>
+                Which kinds of care are actually being confirmed or appreciated in this window.
+              </Text>
+            </View>
+            <View style={styles.entryList}>
+              {areaBalance.length === 0 ? (
+                <Text style={styles.emptyCopy}>No confirmed or appreciated Love Actions are shaping area balance yet.</Text>
+              ) : (
+                areaBalance.map(item => (
+                  <Surface key={item.area} style={styles.entryCard} elevation={0}>
+                    <View style={styles.entryCardContent}>
+                      <View style={styles.entryHeaderRow}>
+                        <View style={styles.entryHeaderCopy}>
+                          <Text variant="titleSmall" style={styles.entryDate}>
+                            {LOVE_AREA_LABELS[item.area]}
+                          </Text>
+                          <Text style={styles.entryMeta}>{item.count} actions in this area</Text>
+                        </View>
+                        <View style={styles.visibilityPill}>
+                          <Text style={styles.visibilityPillText}>{Math.round(item.share)}%</Text>
+                        </View>
+                      </View>
+                    </View>
+                  </Surface>
+                ))
+              )}
+            </View>
+          </Card.Content>
+        </Card>
+        <Card style={styles.archiveCard}>
+          <Card.Content>
+            <View style={styles.sectionHeader}>
+              <Text variant="titleMedium" style={styles.cardTitle}>
+                Relationship history
+              </Text>
+              <Text style={styles.sectionMeta}>
+                A mixed timeline of Love Notes, reflections, completions, and appreciations.
+              </Text>
+            </View>
+            <View style={styles.entryList}>
+              {historyFeed.length === 0 ? (
+                <Text style={styles.emptyCopy}>No recent history yet in this time window.</Text>
+              ) : (
+                historyFeed.map(event => (
+                  <Card key={event.id} style={styles.entryCard}>
+                    <Card.Content style={styles.entryCardContent}>
+                      <View style={styles.entryHeaderRow}>
+                        <View style={styles.entryHeaderCopy}>
+                          <Text variant="titleSmall" style={styles.entryDate}>
+                            {formatInsightDate(event.timestamp)}
+                          </Text>
+                          <Text style={styles.entryMeta}>{event.title}</Text>
+                        </View>
+                        <View style={styles.visibilityPill}>
+                          <Text style={styles.visibilityPillText}>{event.badge}</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.entryDetail}>{event.body}</Text>
                     </Card.Content>
                   </Card>
                 ))

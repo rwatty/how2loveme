@@ -15,6 +15,12 @@ import {
   where,
 } from '@react-native-firebase/firestore';
 import { getFunctions, httpsCallable } from '@react-native-firebase/functions';
+import {
+  LOVE_NOTE_TAGS,
+  LOVE_NOTE_TYPES,
+  type LoveNoteTag,
+  type LoveNoteType,
+} from '../lib/loveNotes';
 import { useCalendarStore, type CalendarEvent } from '../store/useCalendarStore';
 import {
   useInsightsStore,
@@ -235,6 +241,18 @@ function mapInvite(document: any): PartnerInvite {
   };
 }
 
+function mapLoveNoteType(value: any): LoveNoteType {
+  return LOVE_NOTE_TYPES.includes(value) ? value : 'warm';
+}
+
+function mapLoveNoteTags(value: any): LoveNoteTag[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((tag): tag is LoveNoteTag => LOVE_NOTE_TAGS.includes(tag));
+}
+
 function mapMessage(document: any): MirrorMessage {
   const data = document.data();
 
@@ -246,6 +264,9 @@ function mapMessage(document: any): MirrorMessage {
     revealProgress: 0,
     senderId: data?.senderId ?? '',
     senderEmail: data?.senderEmail ?? '',
+    noteType: mapLoveNoteType(data?.noteType),
+    tags: mapLoveNoteTags(data?.tags),
+    promptId: typeof data?.promptId === 'string' ? data.promptId : null,
   };
 }
 
@@ -964,7 +985,16 @@ export async function cancelPartnerInvite(inviteId: string) {
   await callRelationshipFunction('cancelPartnerInvite', { inviteId });
 }
 
-export async function sendMirrorMessage(user: User, message: { text: string; strokes: MirrorStroke[] }) {
+export async function sendMirrorMessage(
+  user: User,
+  message: {
+    text: string;
+    strokes: MirrorStroke[];
+    noteType: LoveNoteType;
+    tags: LoveNoteTag[];
+    promptId?: string | null;
+  },
+) {
   const firestore = getFirestore();
   const email = requireUserEmail(user);
   const profile = useRelationshipStore.getState().profile;
@@ -978,6 +1008,9 @@ export async function sendMirrorMessage(user: User, message: { text: string; str
     strokes: serializeMirrorStrokes(message.strokes),
     senderId: user.uid,
     senderEmail: email,
+    noteType: mapLoveNoteType(message.noteType),
+    tags: mapLoveNoteTags(message.tags),
+    promptId: typeof message.promptId === 'string' ? message.promptId : null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });

@@ -120,9 +120,40 @@ service cloud.firestore {
         'strokes',
         'senderId',
         'senderEmail',
+        'noteType',
+        'tags',
+        'promptId',
         'createdAt',
         'updatedAt'
       ]);
+    }
+
+    function mirrorMessageFieldsValid() {
+      return request.resource.data.noteType is string
+        && (
+          request.resource.data.noteType == 'warm'
+          || request.resource.data.noteType == 'playful'
+          || request.resource.data.noteType == 'reassuring'
+          || request.resource.data.noteType == 'grateful'
+          || request.resource.data.noteType == 'desire'
+        )
+        && request.resource.data.tags is list
+        && request.resource.data.tags.size() <= 5
+        && request.resource.data.tags.hasOnly([
+          'repair',
+          'flirty',
+          'reconnection',
+          'gratitude',
+          'support',
+          'desire',
+          'affirmation',
+          'daily',
+          'softness'
+        ])
+        && (
+          request.resource.data.promptId == null
+          || request.resource.data.promptId is string
+        );
     }
 
     function calendarEventKeysValid() {
@@ -228,6 +259,7 @@ service cloud.firestore {
         allow read: if isCoupleMember(coupleId);
         allow create: if isCoupleMember(coupleId)
           && mirrorMessageKeysValid()
+          && mirrorMessageFieldsValid()
           && request.resource.data.senderId == request.auth.uid
           && request.resource.data.senderEmail == authEmail();
         allow update: if false;

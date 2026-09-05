@@ -47,7 +47,7 @@ function getTabConfig(routeName: MainTabName) {
         label: 'Insights',
         activeIcon: 'chart-box',
         inactiveIcon: 'chart-box-outline',
-        description: 'Reflection and relationship pulse',
+        description: 'Pulse, score, and history',
       };
     case 'Us':
       return {

@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth } from '@react-native-firebase/auth';
 import { Button, Card, Paragraph, Snackbar, Surface, Text, TextInput } from 'react-native-paper';
 import MirrorCanvas from '../MirrorCanvas';
-import { LOVE_NOTE_PROMPTS } from '../lib/loveNotes';
+import { LOVE_NOTE_PROMPTS, LOVE_NOTE_TAG_LABELS, LOVE_NOTE_TYPE_LABELS } from '../lib/loveNotes';
 import { LOVE_AREA_LABELS, LOVE_LIBRARY_GOAL_LABELS, LOVE_LIBRARY_ITEMS } from '../lib/loveLibrary';
 import { disableNotifications, enableNotifications } from '../lib/notifications';
 import {
@@ -534,6 +534,9 @@ export default function HomeScreen() {
                   <Text style={styles.actionMeta}>
                     {selectedMessage.senderId === user?.uid ? 'From you' : `From ${selectedMessage.senderEmail}`} · {getRelativeTime(selectedMessage.createdAt)}
                   </Text>
+                  <Text style={styles.actionMeta}>
+                    {LOVE_NOTE_TYPE_LABELS[selectedMessage.noteType]} · {selectedMessage.tags.map(tag => LOVE_NOTE_TAG_LABELS[tag]).join(' · ') || 'No tags'}
+                  </Text>
                   <View style={styles.actionsRow}>
                     <Button mode="contained-tonal" onPress={() => navigation.navigate('Love')}>
                       Reply in Love
@@ -892,6 +895,9 @@ export default function HomeScreen() {
                   {selectedMessage.senderId === user?.uid ? 'From you' : `From ${selectedMessage.senderEmail}`} ·{' '}
                   {getRelativeTime(selectedMessage.createdAt)}
                 </Text>
+                <Text style={styles.actionMeta}>
+                  {LOVE_NOTE_TYPE_LABELS[selectedMessage.noteType]} · {selectedMessage.tags.map(tag => LOVE_NOTE_TAG_LABELS[tag]).join(' · ') || 'No tags'}
+                </Text>
               </View>
               <MirrorCanvas
                 messageText={selectedMessage.text}
@@ -978,6 +984,9 @@ export default function HomeScreen() {
                               </Text>
                               <Text style={styles.archiveItemText} numberOfLines={2}>
                                 {message.text || 'Finger-drawn Love Note'}
+                              </Text>
+                              <Text style={styles.archiveHint}>
+                                {LOVE_NOTE_TYPE_LABELS[message.noteType]} · {message.tags.map(tag => LOVE_NOTE_TAG_LABELS[tag]).join(' · ') || 'No tags'}
                               </Text>
                             </View>
                             {selected ? <Text style={styles.selectedPill}>Open</Text> : null}
