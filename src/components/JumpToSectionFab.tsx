@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, FAB, Portal, Surface, Text } from 'react-native-paper';
@@ -17,6 +17,12 @@ export default function JumpToSectionFab({ sections, onSelectSection }: JumpToSe
   const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
 
+  useEffect(() => {
+    if (sections.length < 2 && open) {
+      setOpen(false);
+    }
+  }, [open, sections.length]);
+
   if (sections.length < 2) {
     return null;
   }
@@ -30,7 +36,12 @@ export default function JumpToSectionFab({ sections, onSelectSection }: JumpToSe
             <Text variant="titleSmall" style={styles.menuTitle}>
               Jump to section
             </Text>
-            <ScrollView style={styles.menuScroll} contentContainerStyle={styles.menuList} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              style={styles.menuScroll}
+              contentContainerStyle={styles.menuList}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
               {sections.map(section => (
                 <Button
                   key={section.key}
@@ -38,6 +49,8 @@ export default function JumpToSectionFab({ sections, onSelectSection }: JumpToSe
                   compact
                   contentStyle={styles.menuButtonContent}
                   labelStyle={styles.menuButtonLabel}
+                  accessibilityLabel={`Jump to ${section.label}`}
+                  accessibilityHint="Scroll this screen to the selected section"
                   onPress={() => {
                     setOpen(false);
                     onSelectSection(section.key);
@@ -52,6 +65,8 @@ export default function JumpToSectionFab({ sections, onSelectSection }: JumpToSe
         <FAB
           icon={open ? 'close' : 'format-list-bulleted'}
           label={open ? 'Close' : 'Jump to'}
+          accessibilityLabel={open ? 'Close section jump menu' : 'Open section jump menu'}
+          accessibilityHint={open ? 'Close the list of sections for this screen' : 'Open a list of sections to jump through this screen'}
           onPress={() => setOpen(current => !current)}
           style={styles.fab}
           color="#FFF8F3"
