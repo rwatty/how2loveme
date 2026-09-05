@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth } from '@react-native-firebase/auth';
@@ -17,6 +17,18 @@ import {
   TextInput,
 } from 'react-native-paper';
 import MirrorCanvas from '../MirrorCanvas';
+import { LOVE_NOTE_PROMPTS } from '../lib/loveNotes';
+import {
+  LOVE_AREAS,
+  LOVE_AREA_LABELS,
+  LOVE_LIBRARY_EFFORT_LABELS,
+  LOVE_LIBRARY_EFFORTS,
+  LOVE_LIBRARY_GOAL_LABELS,
+  LOVE_LIBRARY_GOALS,
+  LOVE_LIBRARY_ITEMS,
+  type LoveLibraryEffort,
+  type LoveLibraryGoal,
+} from '../lib/loveLibrary';
 import {
   createLoveAction,
   createLovePreference,
@@ -39,31 +51,12 @@ import {
   type LovePreferenceVisibility,
   useLoveProfileStore,
 } from '../store/useLoveProfileStore';
+import { useLoveDraftStore } from '../store/useLoveDraftStore';
 import { type MirrorStroke, useMirrorMessageStore } from '../store/useMirrorMessageStore';
 import { useRelationshipStore } from '../store/useRelationshipStore';
 
 const MAX_MESSAGE_LENGTH = 120;
 const DEFAULT_MESSAGE = 'How 2 love me tonight...';
-const LOVE_AREAS: LoveArea[] = [
-  'emotional',
-  'physicalIntimate',
-  'communication',
-  'financial',
-  'spiritual',
-  'mental',
-  'social',
-  'partnership',
-];
-const LOVE_AREA_LABELS: Record<LoveArea, string> = {
-  emotional: 'Emotional',
-  physicalIntimate: 'Physical / Intimate',
-  communication: 'Communication',
-  financial: 'Financial',
-  spiritual: 'Spiritual',
-  mental: 'Mental',
-  social: 'Social',
-  partnership: 'Partnership',
-};
 const IMPORTANCE_OPTIONS: Array<{ value: LovePreferenceImportance; label: string }> = [
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
@@ -92,108 +85,6 @@ const VISIBILITY_OPTIONS: Array<{ value: LovePreferenceVisibility; label: string
 ];
 const DATE_INPUT_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_INPUT_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
-
-const LOVE_LIBRARY_ITEMS: Array<{
-  id: string;
-  area: LoveArea;
-  title: string;
-  description: string;
-  importance: LovePreferenceImportance;
-  frequency: LovePreferenceFrequency;
-  timing: LovePreferenceTiming;
-  visibility: LovePreferenceVisibility;
-}> = [
-  {
-    id: 'lib-emotional-1',
-    area: 'emotional',
-    title: 'Warm reunion hug',
-    description: 'Give me a long hug and a soft check-in when we reconnect after work.',
-    importance: 'high',
-    frequency: 'severalTimesWeekly',
-    timing: 'evening',
-    visibility: 'shared',
-  },
-  {
-    id: 'lib-emotional-2',
-    area: 'emotional',
-    title: 'Gentle reassurance',
-    description: 'Tell me directly that we are okay when stress starts to build.',
-    importance: 'essential',
-    frequency: 'weekly',
-    timing: 'anytime',
-    visibility: 'shared',
-  },
-  {
-    id: 'lib-physical-1',
-    area: 'physicalIntimate',
-    title: 'Slow touch',
-    description: 'Initiate affectionate touch without rushing toward an outcome.',
-    importance: 'high',
-    frequency: 'weekly',
-    timing: 'evening',
-    visibility: 'surprise',
-  },
-  {
-    id: 'lib-communication-1',
-    area: 'communication',
-    title: 'Clear check-in',
-    description: 'Ask what I need tonight instead of making me guess your energy.',
-    importance: 'high',
-    frequency: 'daily',
-    timing: 'anytime',
-    visibility: 'shared',
-  },
-  {
-    id: 'lib-financial-1',
-    area: 'financial',
-    title: 'Money rhythm',
-    description: 'Set a calm weekly money check-in so finances feel shared, not avoided.',
-    importance: 'medium',
-    frequency: 'weekly',
-    timing: 'weekend',
-    visibility: 'shared',
-  },
-  {
-    id: 'lib-spiritual-1',
-    area: 'spiritual',
-    title: 'Shared grounding',
-    description: 'Pause together for prayer, gratitude, or quiet reflection once a week.',
-    importance: 'medium',
-    frequency: 'weekly',
-    timing: 'weekend',
-    visibility: 'shared',
-  },
-  {
-    id: 'lib-mental-1',
-    area: 'mental',
-    title: 'Protect my focus',
-    description: 'Help me create uninterrupted space when my mind feels overloaded.',
-    importance: 'medium',
-    frequency: 'occasionally',
-    timing: 'custom',
-    visibility: 'private',
-  },
-  {
-    id: 'lib-social-1',
-    area: 'social',
-    title: 'Intentional outing',
-    description: 'Plan a simple social moment that helps us feel alive together.',
-    importance: 'medium',
-    frequency: 'monthly',
-    timing: 'weekend',
-    visibility: 'shared',
-  },
-  {
-    id: 'lib-partnership-1',
-    area: 'partnership',
-    title: 'Shared load',
-    description: 'Take initiative on one practical task so I feel supported, not alone.',
-    importance: 'high',
-    frequency: 'weekly',
-    timing: 'anytime',
-    visibility: 'shared',
-  },
-];
 
 type DeleteTarget =
   | { kind: 'preference'; id: string; label: string }
@@ -331,8 +222,10 @@ function ChoiceGroup({
 
 export default function LoveScreen() {
   const navigation = useNavigation<BottomTabNavigationProp<MainTabParamList>>();
+  const isFocused = useIsFocused();
   const user = getAuth().currentUser;
   const profile = useRelationshipStore(state => state.profile);
+  const partnerReveal = useRelationshipStore(state => state.partnerReveal);
   const relationshipSyncing = useRelationshipStore(state => state.syncing);
   const relationshipError = useRelationshipStore(state => state.error);
   const hydrated = useMirrorMessageStore(state => state.hydrated);
@@ -343,6 +236,9 @@ export default function LoveScreen() {
   const actionsHydrated = useLoveActionStore(state => state.hydrated);
   const actionsSyncing = useLoveActionStore(state => state.syncing);
   const actions = useLoveActionStore(state => state.actions);
+  const pendingLibraryItemId = useLoveDraftStore(state => state.pendingLibraryItemId);
+  const pendingNotePromptId = useLoveDraftStore(state => state.pendingNotePromptId);
+  const clearQueuedDraft = useLoveDraftStore(state => state.clear);
   const [messageText, setMessageText] = useState(DEFAULT_MESSAGE);
   const [strokes, setStrokes] = useState<MirrorStroke[]>([]);
   const [sending, setSending] = useState(false);
@@ -355,6 +251,11 @@ export default function LoveScreen() {
   const [preferenceTiming, setPreferenceTiming] = useState<LovePreferenceTiming>('anytime');
   const [preferenceVisibility, setPreferenceVisibility] = useState<LovePreferenceVisibility>('private');
   const [preferenceCustomTiming, setPreferenceCustomTiming] = useState('');
+  const [librarySearch, setLibrarySearch] = useState('');
+  const [libraryAreaFilter, setLibraryAreaFilter] = useState<LoveArea | 'all'>('all');
+  const [libraryGoalFilter, setLibraryGoalFilter] = useState<LoveLibraryGoal | 'all'>('all');
+  const [libraryEffortFilter, setLibraryEffortFilter] = useState<LoveLibraryEffort | 'all'>('all');
+  const [libraryVisibilityFilter, setLibraryVisibilityFilter] = useState<LovePreferenceVisibility | 'all'>('all');
   const [actionTitle, setActionTitle] = useState('');
   const [actionResponsibleUserId, setActionResponsibleUserId] = useState<string | null>(user?.uid ?? null);
   const [actionDueDate, setActionDueDate] = useState(() => formatDateInputValue(new Date()));
@@ -385,9 +286,25 @@ export default function LoveScreen() {
     () => messages.filter(message => message.senderId === user?.uid).length,
     [messages, user?.uid],
   );
+  const recentLoveNotes = useMemo(() => messages.slice(0, 3), [messages]);
+  const librarySearchQuery = librarySearch.trim().toLowerCase();
+  const featuredLibraryItems = useMemo(() => LOVE_LIBRARY_ITEMS.filter(item => item.featured), []);
   const filteredLibraryItems = useMemo(
-    () => LOVE_LIBRARY_ITEMS.filter(item => item.area === selectedArea),
-    [selectedArea],
+    () =>
+      LOVE_LIBRARY_ITEMS.filter(item => {
+        const matchesArea = libraryAreaFilter === 'all' || item.area === libraryAreaFilter;
+        const matchesGoal = libraryGoalFilter === 'all' || item.goal === libraryGoalFilter;
+        const matchesEffort = libraryEffortFilter === 'all' || item.effort === libraryEffortFilter;
+        const matchesVisibility = libraryVisibilityFilter === 'all' || item.visibility === libraryVisibilityFilter;
+        const matchesSearch =
+          !librarySearchQuery
+          || item.title.toLowerCase().includes(librarySearchQuery)
+          || item.description.toLowerCase().includes(librarySearchQuery)
+          || item.tags.some(tag => tag.toLowerCase().includes(librarySearchQuery));
+
+        return matchesArea && matchesGoal && matchesEffort && matchesVisibility && matchesSearch;
+      }),
+    [libraryAreaFilter, libraryEffortFilter, libraryGoalFilter, librarySearchQuery, libraryVisibilityFilter],
   );
   const ownPreferences = useMemo(
     () => preferences.filter(preference => preference.createdByUserId === user?.uid),
@@ -402,19 +319,53 @@ export default function LoveScreen() {
     [actions, user?.uid],
   );
 
+  const loadNotePrompt = (promptId: string) => {
+    const prompt = LOVE_NOTE_PROMPTS.find(candidate => candidate.id === promptId);
+
+    if (!prompt) {
+      return;
+    }
+
+    setMessageText(prompt.starter);
+    setSnackbar(`${prompt.label} loaded into your Love Note.`);
+  };
+
+  useEffect(() => {
+    if (!isFocused) {
+      return;
+    }
+
+    if (pendingLibraryItemId) {
+      const item = LOVE_LIBRARY_ITEMS.find(candidate => candidate.id === pendingLibraryItemId);
+
+      if (item) {
+        setLibraryAreaFilter(item.area);
+        loadLibraryItemIntoPreference(item);
+      }
+
+      clearQueuedDraft();
+      return;
+    }
+
+    if (pendingNotePromptId) {
+      loadNotePrompt(pendingNotePromptId);
+      clearQueuedDraft();
+    }
+  }, [clearQueuedDraft, isFocused, pendingLibraryItemId, pendingNotePromptId]);
+
   const handleSend = async () => {
     if (!user) {
-      setSnackbar('Sign in again to send a mirror note.');
+      setSnackbar('Sign in again to send a Love Note.');
       return;
     }
 
     if (!profile?.coupleId) {
-      setSnackbar('Connect with your partner in Us before sending mirror notes.');
+      setSnackbar('Connect with your partner in Us before sending Love Notes.');
       return;
     }
 
     if (!trimmedMessage && strokes.length === 0) {
-      setSnackbar('Leave a message or draw on the mirror first.');
+      setSnackbar('Leave a note or draw on the mirror first.');
       return;
     }
 
@@ -427,10 +378,10 @@ export default function LoveScreen() {
       });
       setMessageText(DEFAULT_MESSAGE);
       setStrokes([]);
-      setSnackbar('Your mirror note is now syncing to Home.');
+      setSnackbar('Your Love Note is now syncing to Home.');
       navigation.navigate('Home');
     } catch (error: any) {
-      setSnackbar(error.message ?? 'Unable to send your mirror note right now.');
+      setSnackbar(error.message ?? 'Unable to send your Love Note right now.');
     } finally {
       setSending(false);
     }
@@ -703,7 +654,7 @@ export default function LoveScreen() {
     setPreferenceFrequency(item.frequency);
     setPreferenceTiming(item.timing);
     setPreferenceVisibility(item.visibility);
-    setPreferenceCustomTiming(item.timing === 'custom' ? 'When my mind feels overloaded' : '');
+    setPreferenceCustomTiming(item.timing === 'custom' ? item.customTiming ?? 'Custom timing' : '');
     setEditingPreferenceId(null);
     setEditingActionId(null);
     setSnackbar('Loaded Love Library idea into your forms.');
@@ -723,7 +674,7 @@ export default function LoveScreen() {
             Love
           </Text>
           <Text style={styles.subheader}>
-            Shape the ways you want to be loved, turn them into shared proposals, and still leave something warm on the mirror.
+            Shape the ways you want to be loved, turn them into shared proposals, and still leave something warm as a Love Note.
           </Text>
           <View style={styles.summaryRow}>
             <View style={styles.summaryPill}>
@@ -742,7 +693,7 @@ export default function LoveScreen() {
               <Text style={styles.summaryLabel}>{profile?.coupleId ? 'Connected' : 'Solo'}</Text>
             </View>
           </View>
-          {!hydrated ? <Text style={styles.syncText}>Warming the mirror...</Text> : null}
+          {!hydrated ? <Text style={styles.syncText}>Warming your Love Notes...</Text> : null}
           {!!relationshipError ? <Text style={styles.errorText}>{relationshipError}</Text> : null}
           {!profile?.coupleId && !relationshipSyncing ? (
             <Card style={styles.connectionCard}>
@@ -885,26 +836,110 @@ export default function LoveScreen() {
           <Card style={styles.libraryCard}>
             <Card.Content style={styles.cardContent}>
               <Text variant="titleMedium" style={styles.cardTitle}>
-                Love Library starter picks
+                Full Love Library
               </Text>
               <Text style={styles.foundationBody}>
-                Use curated ideas as prompts, then personalize them into your Love Profile or a shared proposal.
+                Browse curated ways of loving by area, intention, effort, and visibility. Load any idea into your profile or your next shared proposal.
               </Text>
+              <View style={styles.summaryRow}>
+                <View style={styles.summaryPill}>
+                  <Text style={styles.summaryLabel}>{LOVE_LIBRARY_ITEMS.length} ideas</Text>
+                </View>
+                <View style={styles.summaryPill}>
+                  <Text style={styles.summaryLabel}>{filteredLibraryItems.length} showing</Text>
+                </View>
+                {!!partnerReveal?.highlightAreas?.length ? (
+                  <View style={styles.summaryPill}>
+                    <Text style={styles.summaryLabel}>Partner cues {partnerReveal.highlightAreas.length}</Text>
+                  </View>
+                ) : null}
+              </View>
+              <TextInput
+                mode="outlined"
+                label="Search the Love Library"
+                value={librarySearch}
+                onChangeText={setLibrarySearch}
+                style={styles.shortInput}
+                outlineStyle={styles.inputOutline}
+                outlineColor="#E7C9BF"
+                activeOutlineColor="#D79395"
+                placeholder="hug, reassurance, date night, support"
+              />
+              <ChoiceGroup
+                label="Area"
+                value={libraryAreaFilter}
+                options={[
+                  { value: 'all', label: 'All' },
+                  ...LOVE_AREAS.map(area => ({ value: area, label: LOVE_AREA_LABELS[area] })),
+                ]}
+                onChange={value => setLibraryAreaFilter(value as LoveArea | 'all')}
+              />
+              <ChoiceGroup
+                label="Intention"
+                value={libraryGoalFilter}
+                options={[
+                  { value: 'all', label: 'All' },
+                  ...LOVE_LIBRARY_GOALS.map(goal => ({ value: goal, label: LOVE_LIBRARY_GOAL_LABELS[goal] })),
+                ]}
+                onChange={value => setLibraryGoalFilter(value as LoveLibraryGoal | 'all')}
+              />
+              <ChoiceGroup
+                label="Effort"
+                value={libraryEffortFilter}
+                options={[
+                  { value: 'all', label: 'All' },
+                  ...LOVE_LIBRARY_EFFORTS.map(effort => ({ value: effort, label: LOVE_LIBRARY_EFFORT_LABELS[effort] })),
+                ]}
+                onChange={value => setLibraryEffortFilter(value as LoveLibraryEffort | 'all')}
+              />
+              <ChoiceGroup
+                label="Visibility"
+                value={libraryVisibilityFilter}
+                options={[
+                  { value: 'all', label: 'All' },
+                  ...VISIBILITY_OPTIONS,
+                ]}
+                onChange={value => setLibraryVisibilityFilter(value as LovePreferenceVisibility | 'all')}
+              />
+              <View style={styles.stack}>
+                <Text style={styles.choiceLabel}>Featured picks</Text>
+                {featuredLibraryItems.slice(0, 4).map(item => (
+                  <Surface key={item.id} style={styles.listCard} elevation={0}>
+                    <Text style={styles.listTitle}>{item.title}</Text>
+                    <Text style={styles.listMeta}>{item.description}</Text>
+                    <Text style={styles.listMeta}>
+                      {LOVE_AREA_LABELS[item.area]} · {LOVE_LIBRARY_GOAL_LABELS[item.goal]} · {LOVE_LIBRARY_EFFORT_LABELS[item.effort]}
+                    </Text>
+                    <View style={styles.actionsRow}>
+                      <Button mode="text" onPress={() => loadLibraryItemIntoPreference(item)}>
+                        Load into forms
+                      </Button>
+                    </View>
+                  </Surface>
+                ))}
+              </View>
               <View style={styles.stack}>
                 {filteredLibraryItems.map(item => (
                   <Surface key={item.id} style={styles.listCard} elevation={0}>
                     <Text style={styles.listTitle}>{item.title}</Text>
                     <Text style={styles.listMeta}>{item.description}</Text>
                     <Text style={styles.listMeta}>
-                      {item.importance} · {item.frequency} · {item.timing} · {item.visibility}
+                      {LOVE_AREA_LABELS[item.area]} · {LOVE_LIBRARY_GOAL_LABELS[item.goal]} · {LOVE_LIBRARY_EFFORT_LABELS[item.effort]}
                     </Text>
+                    <Text style={styles.listMeta}>
+                      {item.importance} · {item.frequency} · {item.timing === 'custom' ? item.customTiming ?? 'Custom timing' : item.timing} · {item.visibility}
+                    </Text>
+                    <Text style={styles.listMeta}>Best for: {item.tags.slice(0, 3).join(' · ')}</Text>
                     <View style={styles.actionsRow}>
                       <Button mode="text" onPress={() => loadLibraryItemIntoPreference(item)}>
-                        Use this idea
+                        Load into forms
                       </Button>
                     </View>
                   </Surface>
                 ))}
+                {filteredLibraryItems.length === 0 ? (
+                  <Text style={styles.foundationMeta}>No library ideas match those filters yet. Clear one filter or try a broader search.</Text>
+                ) : null}
               </View>
             </Card.Content>
           </Card>
@@ -1135,28 +1170,55 @@ export default function LoveScreen() {
           </Card>
           <Surface style={styles.hero} elevation={0}>
             <Text variant="titleMedium" style={styles.heroTitle}>
-              Compose a Mirror Message
+              Love Notes
             </Text>
             <Text style={styles.heroBody}>
-              Drag a finger through the steam. Your typed words stay readable, and your touch turns the note into a ritual.
+              Write a short note, add a fingertip gesture on the mirror, and send warmth straight into your shared Home.
             </Text>
+            <View style={styles.summaryRow}>
+              <View style={styles.summaryPill}>
+                <Text style={styles.summaryLabel}>Shared {messages.length}</Text>
+              </View>
+              <View style={styles.summaryPill}>
+                <Text style={styles.summaryLabel}>Yours {ownMessageCount}</Text>
+              </View>
+              <View style={styles.summaryPill}>
+                <Text style={styles.summaryLabel}>Prompts {LOVE_NOTE_PROMPTS.length}</Text>
+              </View>
+            </View>
+            <View style={styles.stack}>
+              <Text style={styles.choiceLabel}>Prompt starters</Text>
+              <View style={styles.choiceRow}>
+                {LOVE_NOTE_PROMPTS.map(prompt => (
+                  <Button
+                    key={prompt.id}
+                    mode="outlined"
+                    compact
+                    onPress={() => loadNotePrompt(prompt.id)}
+                    style={styles.choiceButton}
+                  >
+                    {prompt.label}
+                  </Button>
+                ))}
+              </View>
+            </View>
             <MirrorCanvas
               editable
               messageText={trimmedMessage}
               strokes={strokes}
               onChangeStrokes={setStrokes}
               onGestureActiveChange={setMirrorGestureActive}
-              prompt={profile?.coupleId ? 'Write with your finger on the mirror.' : 'Connect your partner to send this note.'}
+              prompt={profile?.coupleId ? 'Write with your finger on the mirror.' : 'Connect your partner to send this Love Note.'}
             />
           </Surface>
           <Card style={styles.card}>
             <Card.Content style={styles.cardContent}>
               <Text variant="titleMedium" style={styles.cardTitle}>
-                Note details
+                Compose note
               </Text>
               <TextInput
                 mode="outlined"
-                label="Short message"
+                label="Love Note"
                 value={messageText}
                 onChangeText={text => setMessageText(text.slice(0, MAX_MESSAGE_LENGTH))}
                 multiline
@@ -1184,7 +1246,7 @@ export default function LoveScreen() {
                   buttonColor={canSend ? '#B25B63' : '#D7C3BC'}
                   textColor={canSend ? '#FFF8F3' : '#8D7279'}
                 >
-                  Send to shared Home
+                  Send Love Note
                 </Button>
                 <Button mode="outlined" onPress={handleResetMirror} disabled={sending}>
                   Clear mirror
@@ -1195,15 +1257,30 @@ export default function LoveScreen() {
           <Card style={styles.archiveCard}>
             <Card.Content>
               <Text variant="titleMedium" style={styles.cardTitle}>
-                Shared energy
+                Recent Love Notes
               </Text>
               <Text style={styles.archiveMeta}>
                 {profile?.coupleId
-                  ? `${messages.length} mirror notes synced with ${profile.partnerEmail ?? 'your partner'}.`
+                  ? `${messages.length} Love Notes synced with ${profile.partnerEmail ?? 'your partner'}.`
                   : 'No live thread yet. Connect with your partner in Us to start syncing notes.'}
               </Text>
+              <View style={styles.stack}>
+                {recentLoveNotes.length === 0 ? (
+                  <Text style={styles.foundationMeta}>Your recent Love Notes will show here once you send the first one.</Text>
+                ) : (
+                  recentLoveNotes.map(message => (
+                    <Surface key={message.id} style={styles.listCard} elevation={0}>
+                      <Text style={styles.listTitle}>{message.text || 'Finger-drawn Love Note'}</Text>
+                      <Text style={styles.listMeta}>
+                        {message.senderId === user?.uid ? 'From you' : `From ${message.senderEmail}`}
+                      </Text>
+                      <Text style={styles.listMeta}>{new Date(message.createdAt).toLocaleString()}</Text>
+                    </Surface>
+                  ))
+                )}
+              </View>
               <Button mode="text" onPress={() => navigation.navigate('Home')} style={styles.archiveButton}>
-                Open Home archive
+                Open Love Notes archive in Home
               </Button>
             </Card.Content>
           </Card>

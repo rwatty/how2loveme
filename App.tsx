@@ -35,6 +35,8 @@ import {
 } from 'react-native-paper';
 import MainNavigator from './src/navigation/MainNavigator';
 import AuthStackNavigator from './src/navigation/AuthStackNavigator';
+import OnboardingScreen from './src/screens/OnboardingScreen';
+import PartnerRevealScreen from './src/screens/PartnerRevealScreen';
 import {
   disableNotifications,
   refreshPushRegistration,
@@ -49,6 +51,7 @@ import {
 import { useBiometricLockStore } from './src/store/useBiometricLockStore';
 import { useLoveActionStore } from './src/store/useLoveActionStore';
 import { useNotificationStore } from './src/store/useNotificationStore';
+import { useRelationshipStore } from './src/store/useRelationshipStore';
 
 const BIOMETRIC_LOCK_STORAGE_KEY = '@how2loveme/biometric-lock-enabled';
 const SPLASH_IMAGE = require('./assets/splash/splash.png');
@@ -149,11 +152,23 @@ function App() {
   const loveActions = useLoveActionStore(state => state.actions);
   const notificationsHydrated = useNotificationStore(state => state.hydrated);
   const notificationsEnabled = useNotificationStore(state => state.enabled);
+  const relationshipHydrated = useRelationshipStore(state => state.hydrated);
+  const profile = useRelationshipStore(state => state.profile);
+  const partnerReveal = useRelationshipStore(state => state.partnerReveal);
   const setHydrated = useBiometricLockStore(state => state.setHydrated);
   const setBiometricEnabled = useBiometricLockStore(state => state.setEnabled);
   const setBiometricAvailability = useBiometricLockStore(state => state.setAvailability);
   const emailVerified = user?.emailVerified ?? false;
   const shouldShowMainApp = !!user && emailVerified;
+  const shouldWaitForRelationshipProfile = shouldShowMainApp && !relationshipHydrated;
+  const shouldShowOnboarding = shouldShowMainApp && relationshipHydrated && !!profile && !profile.onboardingCompleted;
+  const shouldShowPartnerReveal =
+    shouldShowMainApp
+    && relationshipHydrated
+    && !!profile
+    && profile.onboardingCompleted
+    && !!profile.coupleId
+    && profile.revealSeenCoupleId !== profile.coupleId;
   const shouldRequireBiometricUnlock =
     shouldShowMainApp && hydrated && biometricEnabled && biometricAvailable;
   const biometricLabel = getBiometricLabel(biometryType);
@@ -419,7 +434,7 @@ function App() {
     }
   };
 
-  if (initializing || !hydrated || !minimumSplashElapsed) {
+  if (initializing || !hydrated || !minimumSplashElapsed || shouldWaitForRelationshipProfile) {
     return (
       <View style={styles.loader}>
         <View style={styles.loaderImageFrame}>
@@ -464,6 +479,10 @@ function App() {
               </Button>
             </Surface>
           </View>
+        ) : shouldShowOnboarding && user && profile ? (
+          <OnboardingScreen user={user} profile={profile} />
+        ) : shouldShowPartnerReveal && user && profile ? (
+          <PartnerRevealScreen user={user} profile={profile} partnerReveal={partnerReveal} />
         ) : shouldShowMainApp ? (
           <MainNavigator />
         ) : (

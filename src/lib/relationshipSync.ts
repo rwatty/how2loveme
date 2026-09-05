@@ -10,6 +10,7 @@ import {
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
 } from '@react-native-firebase/firestore';
@@ -43,7 +44,9 @@ import {
 } from '../store/useMirrorMessageStore';
 import {
   useRelationshipStore,
+  type NotificationPrivacyPreference,
   type PartnerInvite,
+  type PartnerRevealProfile,
   type RelationshipProfile,
 } from '../store/useRelationshipStore';
 
@@ -141,6 +144,7 @@ const LOVE_ACTION_STATUSES: LoveActionStatus[] = [
   'needsAttention',
   'cancelled',
 ];
+const NOTIFICATION_PRIVACY_PREFERENCES: NotificationPrivacyPreference[] = ['detailed', 'discreet', 'off'];
 
 function isOneOf<T extends string>(value: any, validValues: T[]): value is T {
   return typeof value === 'string' && validValues.includes(value as T);
@@ -174,8 +178,13 @@ function mapLoveActionStatus(value: any): LoveActionStatus {
   return isOneOf(value, LOVE_ACTION_STATUSES) ? value : 'proposed';
 }
 
+function mapNotificationPrivacyPreference(value: any): NotificationPrivacyPreference {
+  return isOneOf(value, NOTIFICATION_PRIVACY_PREFERENCES) ? value : 'discreet';
+}
+
 function mapProfile(userId: string, data: any, fallbackEmail: string): RelationshipProfile {
   const email = data?.email ?? fallbackEmail;
+  const displayName = typeof data?.displayName === 'string' ? data.displayName.trim() : '';
 
   return {
     userId,
@@ -184,6 +193,32 @@ function mapProfile(userId: string, data: any, fallbackEmail: string): Relations
     partnerId: data?.partnerId ?? null,
     partnerEmail: data?.partnerEmail ?? null,
     coupleId: data?.coupleId ?? null,
+    displayName,
+    notificationPrivacy: mapNotificationPrivacyPreference(data?.notificationPrivacy),
+    adultConfirmed: !!data?.adultConfirmedAt,
+    privacyAccepted: !!data?.privacyAcceptedAt,
+    safetyAccepted: !!data?.safetyAcceptedAt,
+    onboardingCompleted: !!data?.onboardingCompletedAt,
+    onboardingCompletedAt: data?.onboardingCompletedAt ? toMillis(data.onboardingCompletedAt) : null,
+    revealSeenCoupleId: typeof data?.revealSeenCoupleId === 'string' ? data.revealSeenCoupleId : null,
+  };
+}
+
+function mapPartnerReveal(document: any): PartnerRevealProfile {
+  const data = document.data();
+
+  return {
+    userId: document.id,
+    email: data?.email ?? '',
+    displayName: data?.displayName ?? '',
+    preferenceCount: Number.isFinite(Number(data?.preferenceCount)) ? Number(data.preferenceCount) : 0,
+    highlightAreas: Array.isArray(data?.highlightAreas)
+      ? data.highlightAreas.filter((value: unknown): value is string => typeof value === 'string')
+      : [],
+    highlightActions: Array.isArray(data?.highlightActions)
+      ? data.highlightActions.filter((value: unknown): value is string => typeof value === 'string')
+      : [],
+    updatedAt: data?.updatedAt ? toMillis(data.updatedAt) : null,
   };
 }
 
@@ -325,6 +360,12 @@ export type LovePreferenceInput = {
   notes?: string;
 };
 
+export type OnboardingInput = {
+  displayName: string;
+  notificationPrivacy: NotificationPrivacyPreference;
+  starterPreferences: LovePreferenceInput[];
+};
+
 export type LoveActionInput = {
   title: string;
   area: LoveArea;
@@ -412,6 +453,7 @@ export function startRelationshipSync(user: User) {
   let unsubscribeCalendar = () => {};
   let unsubscribeLoveActions = () => {};
   let unsubscribeSharedInsights = () => {};
+  let unsubscribePartnerReveal = () => {};
 
   const stopMessageSync = () => {
     unsubscribeMessages();
@@ -436,6 +478,12 @@ export function startRelationshipSync(user: User) {
     unsubscribeSharedInsights = () => {};
     useInsightsStore.getState().replaceSharedEntries([]);
     useInsightsStore.getState().setSyncingShared(false);
+  };
+
+  const stopPartnerRevealSync = () => {
+    unsubscribePartnerReveal();
+    unsubscribePartnerReveal = () => {};
+    useRelationshipStore.getState().setPartnerReveal(null);
   };
 
   const unsubscribeLovePreferences = onSnapshot(
@@ -472,6 +520,7 @@ export function startRelationshipSync(user: User) {
       const nextProfile = mapProfile(user.uid, snapshot.data(), email);
       const state = useRelationshipStore.getState();
       state.setProfile(nextProfile);
+      state.setHydrated(true);
       state.setSyncing(false);
       state.setError('');
 
@@ -481,6 +530,7 @@ export function startRelationshipSync(user: User) {
           useMirrorMessageStore.getState().setSyncing(false);
           useCalendarStore.getState().setSyncing(false);
           useInsightsStore.getState().setSyncingShared(false);
+          state.setPartnerReveal(null);
         }
         return;
       }
@@ -489,6 +539,7 @@ export function startRelationshipSync(user: User) {
       stopCalendarSync();
       stopLoveActionSync();
       stopSharedInsightsSync();
+      stopPartnerRevealSync();
 
       if (!nextProfile.coupleId) {
         activeCoupleId = null;
@@ -496,6 +547,7 @@ export function startRelationshipSync(user: User) {
         useMirrorMessageStore.getState().setSyncing(false);
         useCalendarStore.getState().setSyncing(false);
         useInsightsStore.getState().setSyncingShared(false);
+        state.setPartnerReveal(null);
         return;
       }
 
@@ -525,6 +577,7 @@ export function startRelationshipSync(user: User) {
         orderBy('createdAt', 'desc'),
         limit(100),
       );
+      const partnerRevealCollection = collection(firestore, 'couples', nextProfile.coupleId, 'preferenceReveals');
 
       unsubscribeMessages = onSnapshot(
         messagesQuery,
@@ -581,11 +634,28 @@ export function startRelationshipSync(user: User) {
           useInsightsStore.getState().setSyncingShared(false);
         },
       );
+
+      unsubscribePartnerReveal = onSnapshot(
+        partnerRevealCollection,
+        revealSnapshot => {
+          const partnerReveal = revealSnapshot.docs
+            .filter(documentSnapshot => documentSnapshot.id !== user.uid)
+            .map(mapPartnerReveal)[0] ?? null;
+          useRelationshipStore.getState().setPartnerReveal(partnerReveal);
+        },
+        error => {
+          useRelationshipStore.getState().setError(
+            error.message ?? 'Unable to load your partner reveal right now.',
+          );
+          useRelationshipStore.getState().setPartnerReveal(null);
+        },
+      );
     },
     error => {
       useRelationshipStore.getState().setError(
         error.message ?? 'Unable to sync your relationship profile right now.',
       );
+      useRelationshipStore.getState().setHydrated(true);
       useRelationshipStore.getState().setSyncing(false);
       useLoveProfileStore.getState().setSyncing(false);
       useLoveActionStore.getState().setSyncing(false);
@@ -632,6 +702,7 @@ export function startRelationshipSync(user: User) {
     stopCalendarSync();
     stopLoveActionSync();
     stopSharedInsightsSync();
+    stopPartnerRevealSync();
     activeCoupleId = null;
     useRelationshipStore.getState().setSyncing(false);
     useLoveProfileStore.getState().setSyncing(false);
@@ -641,6 +712,49 @@ export function startRelationshipSync(user: User) {
     useInsightsStore.getState().setSyncingPrivate(false);
     useInsightsStore.getState().setSyncingShared(false);
   };
+}
+
+export async function completeOnboarding(user: User, input: OnboardingInput) {
+  requireUserEmail(user);
+
+  return callRelationshipFunction<
+    {
+      displayName: string;
+      notificationPrivacy: NotificationPrivacyPreference;
+      starterPreferences: LovePreferenceInput[];
+    },
+    { success: boolean; preferenceCount: number }
+  >('completeOnboarding', {
+    displayName: input.displayName,
+    notificationPrivacy: input.notificationPrivacy,
+    starterPreferences: input.starterPreferences.map(preference => ({
+      area: preference.area,
+      actionText: preference.actionText,
+      actionSource: preference.actionSource ?? 'library',
+      importance: preference.importance ?? 'medium',
+      frequency: preference.frequency ?? 'weekly',
+      timing: preference.timing ?? 'anytime',
+      customTiming: preference.customTiming ?? null,
+      visibility: preference.visibility ?? 'shared',
+      notes: preference.notes ?? '',
+    })),
+  });
+}
+
+export async function markPartnerRevealSeen(user: User, coupleId: string) {
+  requireUserEmail(user);
+
+  await setDoc(
+    doc(getFirestore(), 'users', user.uid),
+    {
+      email: requireUserEmail(user),
+      normalizedEmail: normalizeEmail(requireUserEmail(user)),
+      revealSeenCoupleId: coupleId,
+      updatedAt: serverTimestamp(),
+      lastSeenAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
 }
 
 export async function createLovePreference(user: User, input: LovePreferenceInput) {

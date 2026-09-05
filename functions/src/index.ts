@@ -124,6 +124,7 @@ const LOVE_ACTION_CONFIRMATION_REACTIONS = ['yep', 'lovedIt', 'letsTryAgain'] as
 const LOVE_ACTION_APPRECIATION_REACTIONS = ['thankYou', 'madeMyDay', 'morePlease'] as const;
 const PUSH_DEVICE_PLATFORMS = ['ios', 'android'] as const;
 const LOVE_ACTION_SOURCES = ['library', 'custom'] as const;
+const NOTIFICATION_PRIVACY_PREFERENCES = ['detailed', 'discreet', 'off'] as const;
 
 type LoveArea = (typeof LOVE_AREAS)[number];
 type LoveImportance = (typeof LOVE_IMPORTANCE)[number];
@@ -137,6 +138,7 @@ type LoveActionConfirmationReaction = (typeof LOVE_ACTION_CONFIRMATION_REACTIONS
 type LoveActionAppreciationReaction = (typeof LOVE_ACTION_APPRECIATION_REACTIONS)[number];
 type PushDevicePlatform = (typeof PUSH_DEVICE_PLATFORMS)[number];
 type LoveActionLifecycleTarget = 'due' | 'performed' | 'confirmed' | 'appreciated';
+type NotificationPrivacyPreference = (typeof NOTIFICATION_PRIVACY_PREFERENCES)[number];
 
 type LovePreferencePayload = {
   area: LoveArea;
@@ -172,11 +174,28 @@ type UserRelationshipProfile = {
   partnerId?: string | null;
   partnerEmail?: string | null;
   coupleId?: string | null;
+  displayName?: string;
+  notificationPrivacy?: NotificationPrivacyPreference;
+  adultConfirmedAt?: Timestamp | null;
+  privacyAcceptedAt?: Timestamp | null;
+  safetyAcceptedAt?: Timestamp | null;
+  onboardingCompletedAt?: Timestamp | null;
+  revealSeenCoupleId?: string | null;
 };
 
 type CoupleRecord = {
   memberIds?: string[];
   memberEmails?: string[];
+};
+
+type PreferenceRevealRecord = {
+  userId: string;
+  email: string;
+  displayName: string;
+  preferenceCount: number;
+  highlightAreas: string[];
+  highlightActions: string[];
+  updatedAt: FieldValue;
 };
 
 function isOneOf<T extends string>(value: string, allowed: readonly T[]): value is T {
@@ -307,6 +326,79 @@ function normalizeLovePreferencePayload(data: any): LovePreferencePayload {
     visibility: readEnum(data?.visibility, LOVE_VISIBILITIES, 'private'),
     notes: readOptionalString(data?.notes, 280),
   };
+}
+
+function normalizeOnboardingPayload(data: any) {
+  const displayName = readRequiredString(data?.displayName, 'display name', 40);
+  const notificationPrivacy = readEnum(data?.notificationPrivacy, NOTIFICATION_PRIVACY_PREFERENCES, 'discreet');
+  const starterPreferences = Array.isArray(data?.starterPreferences)
+    ? data.starterPreferences.map(normalizeLovePreferencePayload)
+    : [];
+
+  if (starterPreferences.length < 5) {
+    throw new HttpsError('invalid-argument', 'Choose at least five ways you feel loved to complete onboarding.');
+  }
+
+  if (starterPreferences.length > 12) {
+    throw new HttpsError('invalid-argument', 'Too many starter preferences were submitted at once.');
+  }
+
+  return {
+    displayName,
+    notificationPrivacy,
+    starterPreferences,
+  } satisfies {
+    displayName: string;
+    notificationPrivacy: NotificationPrivacyPreference;
+    starterPreferences: LovePreferencePayload[];
+  };
+}
+
+async function syncPreferenceRevealSummary(
+  firestore: FirebaseFirestore.Firestore,
+  input: { uid: string; email: string; coupleId: string },
+) {
+  const profileSnapshot = await firestore.collection('users').doc(input.uid).get();
+  const profile = profileSnapshot.data() as UserRelationshipProfile | undefined;
+  const preferencesSnapshot = await firestore
+    .collection('users')
+    .doc(input.uid)
+    .collection('lovePreferences')
+    .orderBy('updatedAt', 'desc')
+    .limit(12)
+    .get();
+
+  const preferences = preferencesSnapshot.docs
+    .map(documentSnapshot => documentSnapshot.data() as Partial<LovePreferencePayload> & { area?: string; actionText?: string })
+    .filter(preference => typeof preference.actionText === 'string' && preference.actionText.trim().length > 0);
+  const visiblePreferences = preferences.filter(preference => preference.visibility !== 'private');
+  const revealSource = visiblePreferences.length > 0 ? visiblePreferences : preferences;
+  const highlightActions = revealSource.slice(0, 5).map(preference => String(preference.actionText).trim());
+  const highlightAreas = Array.from(
+    new Set(
+      revealSource
+        .map(preference => String(preference.area ?? '').trim())
+        .filter(area => isOneOf(area, LOVE_AREAS)),
+    ),
+  ).slice(0, 3);
+  const displayName = profile?.displayName?.trim() || input.email.split('@')[0] || 'Partner';
+
+  const payload: PreferenceRevealRecord = {
+    userId: input.uid,
+    email: input.email,
+    displayName,
+    preferenceCount: preferences.length,
+    highlightAreas,
+    highlightActions,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+
+  await firestore
+    .collection('couples')
+    .doc(input.coupleId)
+    .collection('preferenceReveals')
+    .doc(input.uid)
+    .set(payload, { merge: true });
 }
 
 function normalizeLoveActionPayload(data: any, uid: string, partnerId: string): LoveActionPayload {
@@ -543,6 +635,10 @@ export const acceptPartnerInvite = onCall(async request => {
 
   const firestore = getFirestore();
 
+  let coupleId = '';
+  let inviterUserId = '';
+  let inviterEmail = '';
+
   await firestore.runTransaction(async transaction => {
     const inviteRef = firestore.collection('partnerInvites').doc(inviteId);
     const inviteSnapshot = await transaction.get(inviteRef);
@@ -581,6 +677,9 @@ export const acceptPartnerInvite = onCall(async request => {
     }
 
     const coupleRef = firestore.collection('couples').doc();
+    coupleId = coupleRef.id;
+    inviterUserId = invite.fromUserId;
+    inviterEmail = invite.fromEmail;
 
     transaction.set(coupleRef, {
       inviteId,
@@ -624,6 +723,21 @@ export const acceptPartnerInvite = onCall(async request => {
       updatedAt: FieldValue.serverTimestamp(),
     });
   });
+
+  if (coupleId) {
+    await Promise.all([
+      syncPreferenceRevealSummary(firestore, {
+        uid: inviterUserId,
+        email: inviterEmail,
+        coupleId,
+      }),
+      syncPreferenceRevealSummary(firestore, {
+        uid,
+        email,
+        coupleId,
+      }),
+    ]);
+  }
 
   return { success: true };
 });
@@ -696,12 +810,70 @@ export const cancelPartnerInvite = onCall(async request => {
   return { success: true };
 });
 
+export const completeOnboarding = onCall(async request => {
+  const { uid, email } = requireAuth(request);
+  await ensureRelationshipProfile(uid, email);
+
+  const { displayName, notificationPrivacy, starterPreferences } = normalizeOnboardingPayload(request.data);
+  const firestore = getFirestore();
+  const userRef = firestore.collection('users').doc(uid);
+  const profileSnapshot = await userRef.get();
+  const profile = profileSnapshot.data() as UserRelationshipProfile | undefined;
+
+  const batch = firestore.batch();
+  batch.set(
+    userRef,
+    {
+      email,
+      normalizedEmail: normalizeEmail(email),
+      displayName,
+      notificationPrivacy,
+      adultConfirmedAt: profile?.adultConfirmedAt ?? FieldValue.serverTimestamp(),
+      privacyAcceptedAt: profile?.privacyAcceptedAt ?? FieldValue.serverTimestamp(),
+      safetyAcceptedAt: profile?.safetyAcceptedAt ?? FieldValue.serverTimestamp(),
+      onboardingCompletedAt: profile?.onboardingCompletedAt ?? FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+      lastSeenAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+
+  if (!profile?.onboardingCompletedAt) {
+    starterPreferences.forEach((preference: LovePreferencePayload) => {
+      const preferenceRef = userRef.collection('lovePreferences').doc();
+      batch.set(preferenceRef, {
+        ...preference,
+        createdByUserId: uid,
+        createdByEmail: email,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  await batch.commit();
+
+  const nextProfileSnapshot = await userRef.get();
+  const nextProfile = nextProfileSnapshot.data() as UserRelationshipProfile | undefined;
+
+  if (nextProfile?.coupleId) {
+    await syncPreferenceRevealSummary(firestore, {
+      uid,
+      email,
+      coupleId: nextProfile.coupleId,
+    });
+  }
+
+  return { success: true, preferenceCount: starterPreferences.length };
+});
+
 export const createLovePreference = onCall(async request => {
   const { uid, email } = requireAuth(request);
   await ensureRelationshipProfile(uid, email);
 
   const payload = normalizeLovePreferencePayload(request.data);
   const firestore = getFirestore();
+  const profile = await getRelationshipProfile(uid);
   const preferenceRef = await firestore.collection('users').doc(uid).collection('lovePreferences').add({
     ...payload,
     createdByUserId: uid,
@@ -709,6 +881,10 @@ export const createLovePreference = onCall(async request => {
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });
+
+  if (profile.coupleId) {
+    await syncPreferenceRevealSummary(firestore, { uid, email, coupleId: profile.coupleId });
+  }
 
   return { success: true, preferenceId: preferenceRef.id };
 });
@@ -720,6 +896,7 @@ export const updateLovePreference = onCall(async request => {
   const preferenceId = readRequiredString(request.data?.preferenceId, 'love preference ID', 120);
   const payload = normalizeLovePreferencePayload(request.data);
   const firestore = getFirestore();
+  const profile = await getRelationshipProfile(uid);
   const preferenceRef = firestore.collection('users').doc(uid).collection('lovePreferences').doc(preferenceId);
   const preferenceSnapshot = await preferenceRef.get();
   const existing = preferenceSnapshot.data();
@@ -739,6 +916,10 @@ export const updateLovePreference = onCall(async request => {
     createdAt: existing.createdAt,
     updatedAt: FieldValue.serverTimestamp(),
   });
+
+  if (profile.coupleId) {
+    await syncPreferenceRevealSummary(firestore, { uid, email, coupleId: profile.coupleId });
+  }
 
   return { success: true, preferenceId };
 });
@@ -851,6 +1032,7 @@ export const deleteLovePreference = onCall(async request => {
 
   const preferenceId = readRequiredString(request.data?.preferenceId, 'love preference ID', 120);
   const firestore = getFirestore();
+  const profile = await getRelationshipProfile(uid);
   const preferenceRef = firestore.collection('users').doc(uid).collection('lovePreferences').doc(preferenceId);
   const preferenceSnapshot = await preferenceRef.get();
   const existing = preferenceSnapshot.data();
@@ -864,6 +1046,11 @@ export const deleteLovePreference = onCall(async request => {
   }
 
   await preferenceRef.delete();
+
+  if (profile.coupleId) {
+    await syncPreferenceRevealSummary(firestore, { uid, email, coupleId: profile.coupleId });
+  }
+
   return { success: true, preferenceId };
 });
 

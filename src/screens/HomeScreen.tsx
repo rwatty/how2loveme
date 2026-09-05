@@ -6,6 +6,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth } from '@react-native-firebase/auth';
 import { Button, Card, Paragraph, Snackbar, Surface, Text, TextInput } from 'react-native-paper';
 import MirrorCanvas from '../MirrorCanvas';
+import { LOVE_NOTE_PROMPTS } from '../lib/loveNotes';
+import { LOVE_AREA_LABELS, LOVE_LIBRARY_GOAL_LABELS, LOVE_LIBRARY_ITEMS } from '../lib/loveLibrary';
 import { disableNotifications, enableNotifications } from '../lib/notifications';
 import {
   deleteMirrorMessage,
@@ -17,6 +19,7 @@ import {
 } from '../lib/relationshipSync';
 import { MainTabParamList } from '../navigation/MainNavigator';
 import { type LoveAction, useLoveActionStore } from '../store/useLoveActionStore';
+import { useLoveDraftStore } from '../store/useLoveDraftStore';
 import { type MirrorMessage, useMirrorMessageStore } from '../store/useMirrorMessageStore';
 import { useNotificationStore } from '../store/useNotificationStore';
 import { useRelationshipStore } from '../store/useRelationshipStore';
@@ -50,14 +53,14 @@ function getRelativeTime(createdAt: number) {
 
 function getRevealLabel(progress: number) {
   if (progress >= 1) {
-    return 'Mirror note revealed';
+    return 'Love Note revealed';
   }
 
   if (progress >= 0.45) {
     return 'Keep clearing the steam';
   }
 
-  return 'Swipe across the mirror to reveal the note';
+  return 'Swipe across the mirror to reveal the Love Note';
 }
 
 function formatDueLabel(nextDueAt: number | null) {
@@ -154,6 +157,7 @@ export default function HomeScreen() {
   const navigation = useNavigation<BottomTabNavigationProp<MainTabParamList>>();
   const user = getAuth().currentUser;
   const profile = useRelationshipStore(state => state.profile);
+  const partnerReveal = useRelationshipStore(state => state.partnerReveal);
   const relationshipSyncing = useRelationshipStore(state => state.syncing);
   const relationshipError = useRelationshipStore(state => state.error);
   const hydrated = useMirrorMessageStore(state => state.hydrated);
@@ -165,6 +169,8 @@ export default function HomeScreen() {
   const loveActionsHydrated = useLoveActionStore(state => state.hydrated);
   const loveActionsSyncing = useLoveActionStore(state => state.syncing);
   const loveActions = useLoveActionStore(state => state.actions);
+  const queueLibraryItem = useLoveDraftStore(state => state.queueLibraryItem);
+  const queueNotePrompt = useLoveDraftStore(state => state.queueNotePrompt);
   const notificationsEnabled = useNotificationStore(state => state.enabled);
   const notificationPermission = useNotificationStore(state => state.permission);
   const notificationToken = useNotificationStore(state => state.token);
@@ -197,6 +203,12 @@ export default function HomeScreen() {
     () => messages.filter(message => message.revealProgress >= 1).length,
     [messages],
   );
+  const suggestedLibraryItems = useMemo(() => {
+    const highlightedAreas = partnerReveal?.highlightAreas ?? [];
+    const matchingAreas = LOVE_LIBRARY_ITEMS.filter(item => highlightedAreas.includes(item.area));
+    const fallbackItems = LOVE_LIBRARY_ITEMS.filter(item => item.featured && !highlightedAreas.includes(item.area));
+    return [...matchingAreas, ...fallbackItems].slice(0, 4);
+  }, [partnerReveal?.highlightAreas]);
   const pendingProposalInbox = useMemo(
     () => loveActions.filter(action => action.recipientUserId === user?.uid && action.status === 'proposed'),
     [loveActions, user?.uid],
@@ -274,6 +286,16 @@ export default function HomeScreen() {
     [loveActions, user?.uid],
   );
 
+  const openLibrarySuggestion = (libraryItemId: string) => {
+    queueLibraryItem(libraryItemId);
+    navigation.navigate('Love');
+  };
+
+  const openLoveNotePrompt = (notePromptId: string) => {
+    queueNotePrompt(notePromptId);
+    navigation.navigate('Love');
+  };
+
   const handleDeleteMessage = async (message: MirrorMessage) => {
     if (!user) {
       return;
@@ -285,7 +307,7 @@ export default function HomeScreen() {
     try {
       await deleteMirrorMessage(user, message);
     } catch (error: any) {
-      setScreenError(error.message ?? 'Unable to delete this mirror note right now.');
+      setScreenError(error.message ?? 'Unable to delete this Love Note right now.');
     } finally {
       setDeletingMessageId(null);
     }
@@ -430,7 +452,7 @@ export default function HomeScreen() {
           <Text variant="headlineMedium" style={styles.header}>
             Home
           </Text>
-          <Text style={styles.subheader}>Warming the mirror and syncing your shared space.</Text>
+          <Text style={styles.subheader}>Warming your Love Notes and syncing your shared space.</Text>
           {summaryRow}
         </ScrollView>
       </SafeAreaView>
@@ -445,15 +467,15 @@ export default function HomeScreen() {
             Home
           </Text>
           <Text style={styles.subheader}>
-            Connect with your partner in Us to unlock shared mirror notes and live sync.
+            Connect with your partner in Us to unlock shared Love Notes and live sync.
           </Text>
           {summaryRow}
           <Surface style={styles.emptyHero} elevation={0}>
             <Text variant="titleMedium" style={styles.emptyTitle}>
-              Your mirror is waiting
+              Your Love Notes are waiting
             </Text>
             <Text style={styles.emptyBody}>
-              Send a partner invite by email from Us, then your mirror notes and Love Actions will sync across both accounts.
+              Send a partner invite by email from Us, then your Love Notes and Love Actions will sync across both accounts.
             </Text>
             <Button mode="contained" onPress={() => navigation.navigate('Us')} style={styles.primaryButton}>
               Connect in Us
@@ -479,7 +501,7 @@ export default function HomeScreen() {
             Home
           </Text>
           <Text style={styles.subheader}>
-            See what needs love today, answer shared proposals, and keep your mirror close by.
+            See what needs love today, answer shared proposals, and keep your Love Notes close by.
           </Text>
           {summaryRow}
           {!!relationshipError && <Text style={styles.errorText}>{relationshipError}</Text>}
@@ -487,6 +509,82 @@ export default function HomeScreen() {
           {!loveActionsHydrated || loveActionsSyncing ? (
             <Text style={styles.syncText}>Syncing shared Love Actions...</Text>
           ) : null}
+          <Card style={styles.card}>
+            <Card.Content style={styles.cardContent}>
+              <Text variant="titleMedium" style={styles.cardTitle}>
+                Love Notes
+              </Text>
+              <Paragraph style={styles.cardBody}>
+                Keep a lightweight stream of warmth alive between you. Use a prompt, reply to the latest note, or open the archive below.
+              </Paragraph>
+              <View style={styles.summaryRow}>
+                <View style={styles.summaryPill}>
+                  <Text style={styles.summaryLabel}>Shared {messages.length}</Text>
+                </View>
+                <View style={styles.summaryPill}>
+                  <Text style={styles.summaryLabel}>Revealed {revealedCount}</Text>
+                </View>
+                <View style={styles.summaryPill}>
+                  <Text style={styles.summaryLabel}>Prompts {LOVE_NOTE_PROMPTS.length}</Text>
+                </View>
+              </View>
+              {selectedMessage ? (
+                <Surface style={styles.actionItem} elevation={0}>
+                  <Text style={styles.actionTitle}>{selectedMessage.text || 'Finger-drawn Love Note'}</Text>
+                  <Text style={styles.actionMeta}>
+                    {selectedMessage.senderId === user?.uid ? 'From you' : `From ${selectedMessage.senderEmail}`} · {getRelativeTime(selectedMessage.createdAt)}
+                  </Text>
+                  <View style={styles.actionsRow}>
+                    <Button mode="contained-tonal" onPress={() => navigation.navigate('Love')}>
+                      Reply in Love
+                    </Button>
+                    <Button mode="text" onPress={() => setRevealProgress(selectedMessage.id, 0)}>
+                      Reset reveal
+                    </Button>
+                  </View>
+                </Surface>
+              ) : null}
+              <View style={styles.actionList}>
+                {LOVE_NOTE_PROMPTS.slice(0, 3).map(prompt => (
+                  <Surface key={prompt.id} style={styles.actionItem} elevation={0}>
+                    <Text style={styles.actionTitle}>{prompt.label}</Text>
+                    <Text style={styles.actionMeta}>{prompt.prompt}</Text>
+                    <Button mode="contained-tonal" onPress={() => openLoveNotePrompt(prompt.id)}>
+                      Write in Love
+                    </Button>
+                  </Surface>
+                ))}
+              </View>
+            </Card.Content>
+          </Card>
+          <Card style={styles.card}>
+            <Card.Content style={styles.cardContent}>
+              <Text variant="titleMedium" style={styles.cardTitle}>
+                Love Library nudges
+              </Text>
+              <Paragraph style={styles.cardBody}>
+                Turn your partner’s current cues into something actionable, whether it is reassurance, play, support, or closeness.
+              </Paragraph>
+              {suggestedLibraryItems.length === 0 ? (
+                <Text style={styles.archiveHint}>Your curated Love Library picks will appear here as your shared space grows.</Text>
+              ) : (
+                <View style={styles.actionList}>
+                  {suggestedLibraryItems.map(item => (
+                    <Surface key={item.id} style={styles.actionItem} elevation={0}>
+                      <Text style={styles.actionTitle}>{item.title}</Text>
+                      <Text style={styles.actionMeta}>{item.description}</Text>
+                      <Text style={styles.actionMeta}>
+                        {LOVE_AREA_LABELS[item.area]} · {LOVE_LIBRARY_GOAL_LABELS[item.goal]}
+                      </Text>
+                      <Button mode="contained-tonal" onPress={() => openLibrarySuggestion(item.id)}>
+                        Load in Love
+                      </Button>
+                    </Surface>
+                  ))}
+                </View>
+              )}
+            </Card.Content>
+          </Card>
           <Card style={styles.card}>
             <Card.Content style={styles.cardContent}>
               <Text variant="titleMedium" style={styles.cardTitle}>
@@ -788,7 +886,7 @@ export default function HomeScreen() {
             <Surface style={styles.hero} elevation={0}>
               <View style={styles.heroCopy}>
                 <Text variant="titleMedium" style={styles.heroTitle}>
-                  Mirror Message
+                  Love Note
                 </Text>
                 <Text style={styles.heroMeta}>
                   {selectedMessage.senderId === user?.uid ? 'From you' : `From ${selectedMessage.senderEmail}`} ·{' '}
@@ -801,16 +899,16 @@ export default function HomeScreen() {
                 revealProgress={selectedMessage.revealProgress}
                 onRevealProgressChange={progress => setRevealProgress(selectedMessage.id, progress)}
                 onGestureActiveChange={setMirrorGestureActive}
-                prompt={syncing ? 'Syncing your shared mirror...' : getRevealLabel(selectedMessage.revealProgress)}
+                prompt={syncing ? 'Syncing your shared Love Notes...' : getRevealLabel(selectedMessage.revealProgress)}
               />
             </Surface>
           ) : (
             <Surface style={styles.emptyHero} elevation={0}>
               <Text variant="titleMedium" style={styles.emptyTitle}>
-                No shared mirror notes yet
+                No shared Love Notes yet
               </Text>
               <Text style={styles.emptyBody}>
-                Your Love Actions can move ahead without waiting on a mirror note. Head to Love when you want to leave the first shared note too.
+                Your Love Actions can move ahead without waiting on a Love Note. Head to Love when you want to leave the first shared note too.
               </Text>
               <Button mode="contained" onPress={() => navigation.navigate('Love')} style={styles.primaryButton}>
                 Open Love
@@ -821,10 +919,10 @@ export default function HomeScreen() {
             <Card style={styles.card}>
               <Card.Content style={styles.cardContent}>
                 <Text variant="titleMedium" style={styles.cardTitle}>
-                  Current note
+                  Current Love Note
                 </Text>
                 <Paragraph style={styles.cardBody}>
-                  Reply with a new mirror message, reset the reveal, or remove a note you sent from the shared thread.
+                  Reply with a new Love Note, reset the reveal, or remove a note you sent from the shared thread.
                 </Paragraph>
                 <View style={styles.actionsRow}>
                   <Button mode="contained" onPress={() => navigation.navigate('Love')} style={styles.primaryButton}>
@@ -839,7 +937,7 @@ export default function HomeScreen() {
                   onPress={() => void handleDeleteMessage(selectedMessage)}
                   disabled={selectedMessage.senderId !== user?.uid || deletingMessageId === selectedMessage.id}
                 >
-                  {selectedMessage.senderId === user?.uid ? 'Delete this shared note' : 'Only the sender can delete this note'}
+                  {selectedMessage.senderId === user?.uid ? 'Delete this Love Note' : 'Only the sender can delete this note'}
                 </Button>
               </Card.Content>
             </Card>
@@ -849,7 +947,7 @@ export default function HomeScreen() {
               <View style={styles.archiveHeaderRow}>
                 <View>
                   <Text variant="titleMedium" style={styles.cardTitle}>
-                    Shared mirror archive
+                    Love Notes archive
                   </Text>
                   <Text style={styles.archiveMeta}>
                     {messages.length} synced notes with {profile.partnerEmail ?? 'your partner'}
@@ -857,7 +955,7 @@ export default function HomeScreen() {
                 </View>
               </View>
               {messages.length === 0 ? (
-                <Text style={styles.archiveHint}>Your mirror archive will appear here once a note is sent.</Text>
+                <Text style={styles.archiveHint}>Your Love Notes archive will appear here once a note is sent.</Text>
               ) : (
                 <View style={styles.archiveList}>
                   {messages.map(message => {
@@ -879,7 +977,7 @@ export default function HomeScreen() {
                                 {ownership} · {getRelativeTime(message.createdAt)} · {revealed ? 'Revealed' : 'Unrevealed'}
                               </Text>
                               <Text style={styles.archiveItemText} numberOfLines={2}>
-                                {message.text || 'Finger-drawn mirror note'}
+                                {message.text || 'Finger-drawn Love Note'}
                               </Text>
                             </View>
                             {selected ? <Text style={styles.selectedPill}>Open</Text> : null}

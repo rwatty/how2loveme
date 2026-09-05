@@ -26,14 +26,14 @@ function getTabConfig(routeName: MainTabName) {
         label: 'Home',
         activeIcon: 'home-heart',
         inactiveIcon: 'home-outline',
-        description: 'Shared home and mirror notes',
+        description: 'Shared home and Love Notes',
       };
     case 'Love':
       return {
         label: 'Love',
         activeIcon: 'heart',
         inactiveIcon: 'heart-outline',
-        description: 'Write and send love notes',
+        description: 'Love Library and Love Notes',
       };
     case 'Calendar':
       return {

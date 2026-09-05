@@ -42,6 +42,17 @@ function getBiometricLabel(biometryType: BiometryType | null) {
   }
 }
 
+function getNotificationPrivacyCopy(notificationPrivacy: 'detailed' | 'discreet' | 'off') {
+  switch (notificationPrivacy) {
+    case 'detailed':
+      return 'Detailed previews are preferred when reminders appear.';
+    case 'off':
+      return 'Keep reminder detail as quiet as possible on the lock screen.';
+    default:
+      return 'Discreet reminders keep relationship details softer on the lock screen.';
+  }
+}
+
 export default function UsScreen() {
   const user = getAuth().currentUser;
   const hydrated = useBiometricLockStore(state => state.hydrated);
@@ -67,9 +78,14 @@ export default function UsScreen() {
   const inviteEmailError = trimmedInviteEmail.length > 0 && !EMAIL_REGEX.test(trimmedInviteEmail);
 
   const initials = useMemo(() => {
-    const source = user?.email ?? 'H2';
-    return source.slice(0, 2).toUpperCase();
-  }, [user?.email]);
+    const source = profile?.displayName?.trim() || user?.email || 'H2';
+    return source
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(chunk => chunk[0]?.toUpperCase() ?? '')
+      .join('') || 'H2';
+  }, [profile?.displayName, user?.email]);
 
   const biometricDescription = useMemo(() => {
     if (!hydrated) {
@@ -242,7 +258,7 @@ export default function UsScreen() {
             <Avatar.Text size={60} label={initials} color="#FFF3EA" style={styles.avatar} />
             <View style={styles.heroTextWrap}>
               <Text variant="titleMedium" style={styles.heroTitle}>
-                Your account
+                {profile?.displayName?.trim() || 'Your account'}
               </Text>
               <Text style={styles.heroText}>{user?.email ?? 'Signed in'}</Text>
               <Text style={styles.heroMeta}>
@@ -358,6 +374,17 @@ export default function UsScreen() {
                   onValueChange={value => void handleBiometricToggle(value)}
                   disabled={!hydrated || biometricLoading}
                 />
+              </View>
+              <Divider style={styles.divider} />
+              <View style={styles.preferenceRow}>
+                <View style={styles.preferenceTextWrap}>
+                  <Text variant="titleSmall" style={styles.preferenceTitle}>
+                    Notification privacy
+                  </Text>
+                  <Text style={styles.preferenceBody}>
+                    {getNotificationPrivacyCopy(profile?.notificationPrivacy ?? 'discreet')}
+                  </Text>
+                </View>
               </View>
               <Divider style={styles.divider} />
               <Button

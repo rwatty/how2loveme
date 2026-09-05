@@ -30,14 +30,55 @@ service cloud.firestore {
         'partnerId',
         'partnerEmail',
         'coupleId',
+        'displayName',
+        'notificationPrivacy',
+        'adultConfirmedAt',
+        'privacyAcceptedAt',
+        'safetyAcceptedAt',
+        'onboardingCompletedAt',
+        'revealSeenCoupleId',
         'updatedAt',
         'lastSeenAt'
       ]);
     }
 
+    function userProfileFieldsValid() {
+      return (
+          request.resource.data.displayName == null
+          || request.resource.data.displayName is string
+        )
+        && (
+          request.resource.data.notificationPrivacy == null
+          || request.resource.data.notificationPrivacy == 'detailed'
+          || request.resource.data.notificationPrivacy == 'discreet'
+          || request.resource.data.notificationPrivacy == 'off'
+        )
+        && (
+          request.resource.data.adultConfirmedAt == null
+          || request.resource.data.adultConfirmedAt is timestamp
+        )
+        && (
+          request.resource.data.privacyAcceptedAt == null
+          || request.resource.data.privacyAcceptedAt is timestamp
+        )
+        && (
+          request.resource.data.safetyAcceptedAt == null
+          || request.resource.data.safetyAcceptedAt is timestamp
+        )
+        && (
+          request.resource.data.onboardingCompletedAt == null
+          || request.resource.data.onboardingCompletedAt is timestamp
+        )
+        && (
+          request.resource.data.revealSeenCoupleId == null
+          || request.resource.data.revealSeenCoupleId is string
+        );
+    }
+
     function isOwnProfileBaseWrite(userId) {
       return isOwner(userId)
         && userKeysValid()
+        && userProfileFieldsValid()
         && request.resource.data.email == authEmail()
         && request.resource.data.normalizedEmail == normalizedAuthEmail();
     }
@@ -211,6 +252,11 @@ service cloud.firestore {
       }
 
       match /loveActions/{actionId} {
+        allow read: if isCoupleMember(coupleId);
+        allow create, update, delete: if false;
+      }
+
+      match /preferenceReveals/{userId} {
         allow read: if isCoupleMember(coupleId);
         allow create, update, delete: if false;
       }
