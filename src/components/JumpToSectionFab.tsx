@@ -16,6 +16,7 @@ type JumpToSectionFabProps = {
 export default function JumpToSectionFab({ sections, onSelectSection }: JumpToSectionFabProps) {
   const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
+  const bottomOffset = Math.max(insets.bottom + 78, 92);
 
   useEffect(() => {
     if (sections.length < 2 && open) {
@@ -30,12 +31,15 @@ export default function JumpToSectionFab({ sections, onSelectSection }: JumpToSe
   return (
     <Portal>
       {open ? <Pressable style={styles.scrim} onPress={() => setOpen(false)} /> : null}
-      <View pointerEvents="box-none" style={[styles.wrap, { bottom: insets.bottom + 82 }]}> 
+      <View pointerEvents="box-none" style={[styles.wrap, { bottom: bottomOffset }]}>
         {open ? (
           <Surface style={styles.menu} elevation={4}>
-            <Text variant="titleSmall" style={styles.menuTitle}>
-              Jump to section
-            </Text>
+            <View style={styles.menuHeader}>
+              <Text variant="titleSmall" style={styles.menuTitle}>
+                Jump to section
+              </Text>
+              <Text style={styles.menuMeta}>{`${sections.length} sections`}</Text>
+            </View>
             <ScrollView
               style={styles.menuScroll}
               contentContainerStyle={styles.menuList}
@@ -45,8 +49,11 @@ export default function JumpToSectionFab({ sections, onSelectSection }: JumpToSe
               {sections.map(section => (
                 <Button
                   key={section.key}
-                  mode="text"
-                  compact
+                  mode="contained-tonal"
+                  icon="chevron-right"
+                  style={styles.menuButton}
+                  buttonColor="#F8E8DE"
+                  textColor="#7C5964"
                   contentStyle={styles.menuButtonContent}
                   labelStyle={styles.menuButtonLabel}
                   accessibilityLabel={`Jump to ${section.label}`}
@@ -89,29 +96,41 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   menu: {
-    minWidth: 188,
-    maxWidth: 240,
-    borderRadius: 20,
+    minWidth: 204,
+    maxWidth: 252,
+    borderRadius: 22,
     backgroundColor: '#FFF8F3',
     borderWidth: 1,
     borderColor: '#F0D0C0',
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  menuHeader: {
+    gap: 2,
+    paddingHorizontal: 4,
   },
   menuTitle: {
     color: '#3F2831',
     fontWeight: '700',
   },
+  menuMeta: {
+    color: '#8D7279',
+    fontSize: 12,
+  },
   menuScroll: {
     maxHeight: 280,
   },
   menuList: {
-    gap: 4,
+    gap: 6,
+  },
+  menuButton: {
+    borderRadius: 16,
   },
   menuButtonContent: {
     justifyContent: 'flex-start',
-    minHeight: 36,
+    minHeight: 42,
+    paddingHorizontal: 4,
   },
   menuButtonLabel: {
     color: '#7C5964',
@@ -119,5 +138,6 @@ const styles = StyleSheet.create({
   },
   fab: {
     backgroundColor: '#B25B63',
+    borderRadius: 18,
   },
 });
