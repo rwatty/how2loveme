@@ -1,0 +1,235 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email != null;
+    }
+
+    function authEmail() {
+      return request.auth.token.email;
+    }
+
+    function normalizedAuthEmail() {
+      return authEmail().lower();
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function userKeysValid() {
+      return request.resource.data.keys().hasOnly([
+        'email',
+        'normalizedEmail',
+        'partnerId',
+        'partnerEmail',
+        'coupleId',
+        'updatedAt',
+        'lastSeenAt'
+      ]);
+    }
+
+    function isOwnProfileBaseWrite(userId) {
+      return isOwner(userId)
+        && userKeysValid()
+        && request.resource.data.email == authEmail()
+        && request.resource.data.normalizedEmail == normalizedAuthEmail();
+    }
+
+    function hasRelationshipFieldsCleared(data) {
+      return data.partnerId == null
+        && data.partnerEmail == null
+        && data.coupleId == null;
+    }
+
+    function isOwnProfileCreate(userId) {
+      return isOwnProfileBaseWrite(userId)
+        && hasRelationshipFieldsCleared(request.resource.data);
+    }
+
+    function isOwnProfileRoutineUpdate(userId) {
+      return isOwnProfileBaseWrite(userId)
+        && request.resource.data.partnerId == resource.data.partnerId
+        && request.resource.data.partnerEmail == resource.data.partnerEmail
+        && request.resource.data.coupleId == resource.data.coupleId;
+    }
+
+    function isInviteViewer() {
+      return isVerifiedUser()
+        && (
+          resource.data.fromUserId == request.auth.uid
+          || resource.data.normalizedToEmail == normalizedAuthEmail()
+        );
+    }
+
+    function isCoupleMember(coupleId) {
+      return isVerifiedUser()
+        && get(/databases/$(database)/documents/couples/$(coupleId)).data.memberIds.hasAny([request.auth.uid]);
+    }
+
+    function mirrorMessageKeysValid() {
+      return request.resource.data.keys().hasOnly([
+        'text',
+        'strokes',
+        'senderId',
+        'senderEmail',
+        'createdAt',
+        'updatedAt'
+      ]);
+    }
+
+    function calendarEventKeysValid() {
+      return request.resource.data.keys().hasOnly([
+        'title',
+        'note',
+        'startsAt',
+        'endsAt',
+        'allDay',
+        'status',
+        'createdByUserId',
+        'createdByEmail',
+        'createdAt',
+        'updatedAt'
+      ]);
+    }
+
+    function insightKeysValid() {
+      return request.resource.data.keys().hasOnly([
+        'mood',
+        'connection',
+        'tension',
+        'appreciation',
+        'need',
+        'reflection',
+        'nextStep',
+        'visibility',
+        'sharedInsightId',
+        'createdByUserId',
+        'createdByEmail',
+        'createdAt',
+        'updatedAt'
+      ]);
+    }
+
+    function insightBaseValid() {
+      return insightKeysValid()
+        && request.resource.data.mood is int
+        && request.resource.data.connection is int
+        && request.resource.data.tension is int
+        && request.resource.data.mood >= 1
+        && request.resource.data.mood <= 5
+        && request.resource.data.connection >= 1
+        && request.resource.data.connection <= 5
+        && request.resource.data.tension >= 1
+        && request.resource.data.tension <= 5
+        && request.resource.data.appreciation is string
+        && request.resource.data.need is string
+        && request.resource.data.reflection is string
+        && request.resource.data.nextStep is string
+        && request.resource.data.createdByUserId == request.auth.uid
+        && request.resource.data.createdByEmail == authEmail()
+        && (
+          request.resource.data.sharedInsightId == null
+          || request.resource.data.sharedInsightId is string
+        );
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwnProfileCreate(userId);
+      allow update: if isOwnProfileRoutineUpdate(userId);
+      allow delete: if false;
+
+      match /lovePreferences/{preferenceId} {
+        allow read: if isOwner(userId);
+        allow create, update, delete: if false;
+      }
+
+      match /insights/{insightId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && insightBaseValid()
+          && (
+            request.resource.data.visibility == 'private'
+            || request.resource.data.visibility == 'decideLater'
+            || request.resource.data.visibility == 'shared'
+          );
+        allow update: if isOwner(userId)
+          && insightBaseValid()
+          && request.resource.data.createdByUserId == resource.data.createdByUserId
+          && request.resource.data.createdByEmail == resource.data.createdByEmail
+          && request.resource.data.createdAt == resource.data.createdAt
+          && (
+            request.resource.data.visibility == 'private'
+            || request.resource.data.visibility == 'decideLater'
+            || request.resource.data.visibility == 'shared'
+          );
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    match /partnerInvites/{inviteId} {
+      allow read: if isInviteViewer();
+      allow create, update, delete: if false;
+    }
+
+    match /couples/{coupleId} {
+      allow read: if isVerifiedUser() && resource.data.memberIds.hasAny([request.auth.uid]);
+      allow create, update, delete: if false;
+
+      match /mirrorMessages/{messageId} {
+        allow read: if isCoupleMember(coupleId);
+        allow create: if isCoupleMember(coupleId)
+          && mirrorMessageKeysValid()
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.senderEmail == authEmail();
+        allow update: if false;
+        allow delete: if isCoupleMember(coupleId)
+          && resource.data.senderId == request.auth.uid;
+      }
+
+      match /calendarEvents/{eventId} {
+        allow read: if isCoupleMember(coupleId);
+        allow create: if isCoupleMember(coupleId)
+          && calendarEventKeysValid()
+          && request.resource.data.createdByUserId == request.auth.uid
+          && request.resource.data.createdByEmail == authEmail()
+          && request.resource.data.status == 'active';
+        allow update: if isCoupleMember(coupleId)
+          && calendarEventKeysValid()
+          && request.resource.data.createdByUserId == resource.data.createdByUserId
+          && request.resource.data.createdByEmail == resource.data.createdByEmail
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.status == resource.data.status;
+        allow delete: if isCoupleMember(coupleId);
+      }
+
+      match /loveActions/{actionId} {
+        allow read: if isCoupleMember(coupleId);
+        allow create, update, delete: if false;
+      }
+
+      match /insights/{insightId} {
+        allow read: if isCoupleMember(coupleId);
+        allow create: if isCoupleMember(coupleId)
+          && insightBaseValid()
+          && request.resource.data.visibility == 'shared';
+        allow update: if isCoupleMember(coupleId)
+          && resource.data.createdByUserId == request.auth.uid
+          && insightBaseValid()
+          && request.resource.data.createdByUserId == resource.data.createdByUserId
+          && request.resource.data.createdByEmail == resource.data.createdByEmail
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.visibility == 'shared';
+        allow delete: if isCoupleMember(coupleId)
+          && resource.data.createdByUserId == request.auth.uid;
+      }
+    }
+  }
+}

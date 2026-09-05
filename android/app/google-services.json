@@ -1,0 +1,55 @@
+{
+  "project_info": {
+    "project_number": "588803260791",
+    "project_id": "how2loveme-3d2d0",
+    "storage_bucket": "how2loveme-3d2d0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:588803260791:android:11e1be08de62aa8fa86172",
+        "android_client_info": {
+          "package_name": "com.firstgenesis.how2loveme"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "588803260791-qrk58c5ilt82fqfb74h98h071csrdaqn.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.firstgenesis.how2loveme",
+            "certificate_hash": "0174d38bd329a22609b7d4fa9c52f44d3aacc171"
+          }
+        },
+        {
+          "client_id": "588803260791-c2g4ed2796lt58179dcr2ptjjna8bd08.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDUIrLHx58EyUcclPhS8_TwQV7cruk1U8w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "588803260791-c2g4ed2796lt58179dcr2ptjjna8bd08.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "588803260791-7ju31f95247f186v57pdvvofji686e25.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.firstgenesis.how2loveme",
+                "app_store_id": "6805642617"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

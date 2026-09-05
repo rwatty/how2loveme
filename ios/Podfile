@@ -1,0 +1,65 @@
+# Resolve react_native_pods.rb with node to allow for hoisting
+require Pod::Executable.execute_command('node', ['-p',
+  'require.resolve(
+    "react-native/scripts/react_native_pods.rb",
+    {paths: [process.argv[1]]},
+  )', __dir__]).strip
+
+platform :ios, min_ios_version_supported
+ENV['RCT_USE_PREBUILT_RNCORE'] = '0'
+ENV['RCT_USE_RN_DEP'] = '0'
+ENV['RCT_BUILD_HERMES_FROM_SOURCE'] = 'true'
+prepare_react_native_project!
+
+$RNFirebaseDisableSPM = true
+ENV['RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS'] = '1'
+use_frameworks! :linkage => :static
+
+target 'How2LoveMe' do
+  config = use_native_modules!
+
+  use_react_native!(
+    :path => config[:reactNativePath],
+    # An absolute path to your application root.
+    :app_path => "#{Pod::Config.instance.installation_root}/.."
+  )
+
+  post_install do |installer|
+    react_native_post_install(
+      installer,
+      config[:reactNativePath],
+      :mac_catalyst_enabled => false,
+      # :ccache_enabled => true
+    )
+
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |build_configuration|
+        build_configuration.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'x86_64'
+
+        next unless build_configuration.name.include?('Debug')
+        next unless ['hermes-engine', 'React-hermes', 'React-RuntimeHermes'].include?(target.name)
+
+        other_cflags = build_configuration.build_settings['OTHER_CFLAGS']
+        normalized_other_cflags = case other_cflags
+        when Array
+          other_cflags
+        when String
+          other_cflags.split(' ')
+        else
+          ['$(inherited)']
+        end
+
+        build_configuration.build_settings['OTHER_CFLAGS'] = (normalized_other_cflags + ['-UHERMES_ENABLE_DEBUGGER']).uniq
+      end
+    end
+
+    installer.aggregate_targets.each do |aggregate_target|
+      aggregate_target.user_project.native_targets.each do |target|
+        target.build_configurations.each do |build_configuration|
+          build_configuration.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'x86_64'
+        end
+      end
+      aggregate_target.user_project.save
+    end
+  end
+end

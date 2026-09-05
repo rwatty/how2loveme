@@ -1,0 +1,6 @@
+node_modules
+lib
+.env.local
+.env.*
+!.env.example
+.secret.local
