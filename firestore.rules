@@ -32,6 +32,7 @@ service cloud.firestore {
         'coupleId',
         'displayName',
         'notificationPrivacy',
+        'quickTipsEnabled',
         'adultConfirmedAt',
         'privacyAcceptedAt',
         'safetyAcceptedAt',
@@ -52,6 +53,10 @@ service cloud.firestore {
           || request.resource.data.notificationPrivacy == 'detailed'
           || request.resource.data.notificationPrivacy == 'discreet'
           || request.resource.data.notificationPrivacy == 'off'
+        )
+        && (
+          request.resource.data.quickTipsEnabled == null
+          || request.resource.data.quickTipsEnabled is bool
         )
         && (
           request.resource.data.adultConfirmedAt == null
@@ -163,12 +168,55 @@ service cloud.firestore {
         'startsAt',
         'endsAt',
         'allDay',
+        'foodQuery',
+        'foodInterestFor',
+        'restaurantPlaceId',
+        'restaurantName',
+        'restaurantAddress',
+        'restaurantLatitude',
+        'restaurantLongitude',
         'status',
         'createdByUserId',
         'createdByEmail',
         'createdAt',
         'updatedAt'
       ]);
+    }
+
+    function calendarEventFieldsValid() {
+      return calendarEventKeysValid()
+        && request.resource.data.title is string
+        && request.resource.data.note is string
+        && request.resource.data.startsAt is timestamp
+        && (
+          request.resource.data.endsAt == null
+          || request.resource.data.endsAt is timestamp
+        )
+        && request.resource.data.allDay is bool
+        && request.resource.data.foodQuery is string
+        && request.resource.data.foodInterestFor is string
+        && request.resource.data.foodInterestFor in ['me', 'partner', 'both']
+        && (
+          request.resource.data.restaurantPlaceId == null
+          || request.resource.data.restaurantPlaceId is string
+        )
+        && request.resource.data.restaurantName is string
+        && request.resource.data.restaurantAddress is string
+        && (
+          request.resource.data.restaurantLatitude == null
+          || request.resource.data.restaurantLatitude is int
+          || request.resource.data.restaurantLatitude is float
+        )
+        && (
+          request.resource.data.restaurantLongitude == null
+          || request.resource.data.restaurantLongitude is int
+          || request.resource.data.restaurantLongitude is float
+        )
+        && (
+          (request.resource.data.restaurantLatitude == null && request.resource.data.restaurantLongitude == null)
+          || (request.resource.data.restaurantLatitude != null && request.resource.data.restaurantLongitude != null)
+        )
+        && request.resource.data.status in ['active', 'cancelled'];
     }
 
     function loveActionKeysValid() {
@@ -365,12 +413,12 @@ service cloud.firestore {
       match /calendarEvents/{eventId} {
         allow read: if isOwner(userId);
         allow create: if isOwner(userId)
-          && calendarEventKeysValid()
+          && calendarEventFieldsValid()
           && request.resource.data.createdByUserId == request.auth.uid
           && request.resource.data.createdByEmail == authEmail()
           && request.resource.data.status == 'active';
         allow update: if isOwner(userId)
-          && calendarEventKeysValid()
+          && calendarEventFieldsValid()
           && request.resource.data.createdByUserId == resource.data.createdByUserId
           && request.resource.data.createdByEmail == resource.data.createdByEmail
           && request.resource.data.createdAt == resource.data.createdAt
@@ -437,12 +485,12 @@ service cloud.firestore {
       match /calendarEvents/{eventId} {
         allow read: if isCoupleMember(coupleId);
         allow create: if isCoupleMember(coupleId)
-          && calendarEventKeysValid()
+          && calendarEventFieldsValid()
           && request.resource.data.createdByUserId == request.auth.uid
           && request.resource.data.createdByEmail == authEmail()
           && request.resource.data.status == 'active';
         allow update: if isCoupleMember(coupleId)
-          && calendarEventKeysValid()
+          && calendarEventFieldsValid()
           && request.resource.data.createdByUserId == resource.data.createdByUserId
           && request.resource.data.createdByEmail == resource.data.createdByEmail
           && request.resource.data.createdAt == resource.data.createdAt

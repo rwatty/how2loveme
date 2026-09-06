@@ -35,8 +35,11 @@
   - Secret: `RESEND_API_KEY`
   - Param: `INVITE_FROM_EMAIL`
   - Param: `APP_STORE_LINK` (optional; defaults to a plain in-app instruction string)
+- Required Functions secret for nearby restaurant search:
+  - Secret: `GOOGLE_PLACES_API_KEY`
 - Example setup and deploy commands:
   - `firebase --project <your-project-id> functions:secrets:set RESEND_API_KEY`
+  - `firebase --project <your-project-id> functions:secrets:set GOOGLE_PLACES_API_KEY`
   - `firebase --project <your-project-id> deploy --only functions`
   - `firebase --project <your-project-id> deploy --only functions:sendPartnerInvite,functions:acceptPartnerInvite,functions:declinePartnerInvite,functions:cancelPartnerInvite`
 

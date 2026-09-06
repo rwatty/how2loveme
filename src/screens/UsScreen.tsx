@@ -24,6 +24,7 @@ import {
   cancelPartnerInvite,
   declinePartnerInvite,
   sendPartnerInvite,
+  updateQuickTipsPreference,
 } from '../lib/relationshipSync';
 import { useBiometricLockStore } from '../store/useBiometricLockStore';
 import { useRelationshipStore } from '../store/useRelationshipStore';
@@ -76,6 +77,7 @@ export default function UsScreen() {
   const [sectionOffsets, setSectionOffsets] = useState<Record<string, number>>({});
   const scrollViewRef = useRef<any>(null);
   const [biometricLoading, setBiometricLoading] = useState(false);
+  const [quickTipsLoading, setQuickTipsLoading] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
   const [respondingInviteId, setRespondingInviteId] = useState<string | null>(null);
@@ -105,6 +107,7 @@ export default function UsScreen() {
 
     return `Use ${biometricLabel} to reopen the app whenever you come back to your Love Space.`;
   }, [biometricAvailable, biometricLabel, hydrated]);
+  const quickTipsEnabled = profile?.quickTipsEnabled ?? true;
 
   const relationshipDescription = useMemo(() => {
     if (relationshipSyncing && !profile) {
@@ -174,6 +177,24 @@ export default function UsScreen() {
       setSnackbar(error.message ?? 'Unable to send that partner invite right now.');
     } finally {
       setInviteLoading(false);
+    }
+  };
+
+  const handleQuickTipsToggle = async (enabled: boolean) => {
+    if (!user) {
+      setSnackbar('Sign in again to update quick tips.');
+      return;
+    }
+
+    setQuickTipsLoading(true);
+
+    try {
+      await updateQuickTipsPreference(user, enabled);
+      setSnackbar(enabled ? 'Quick tips will show on Home.' : 'Quick tips will stay hidden on Home.');
+    } catch (error: any) {
+      setSnackbar(error.message ?? 'Unable to update quick tips right now.');
+    } finally {
+      setQuickTipsLoading(false);
     }
   };
 
@@ -402,6 +423,22 @@ export default function UsScreen() {
                   value={biometricEnabled}
                   onValueChange={value => void handleBiometricToggle(value)}
                   disabled={!hydrated || biometricLoading}
+                />
+              </View>
+              <Divider style={styles.divider} />
+              <View style={styles.preferenceRow}>
+                <View style={styles.preferenceTextWrap}>
+                  <Text variant="titleSmall" style={styles.preferenceTitle}>
+                    Home quick tips
+                  </Text>
+                  <Text style={styles.preferenceBody}>
+                    Show the modern quick-start cards on Home so the most common actions stay one tap away.
+                  </Text>
+                </View>
+                <Switch
+                  value={quickTipsEnabled}
+                  onValueChange={value => void handleQuickTipsToggle(value)}
+                  disabled={quickTipsLoading || relationshipSyncing}
                 />
               </View>
               <Divider style={styles.divider} />

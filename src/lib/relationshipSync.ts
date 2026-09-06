@@ -27,7 +27,7 @@ import {
   type PulseTrend,
   type RelationshipMetricSnapshot,
 } from '../lib/relationshipMetrics';
-import { useCalendarStore, type CalendarEvent } from '../store/useCalendarStore';
+import { useCalendarStore, type CalendarEvent, type CalendarFoodInterestFor } from '../store/useCalendarStore';
 import {
   useInsightsStore,
   type InsightEntry,
@@ -222,6 +222,7 @@ function mapProfile(userId: string, data: any, fallbackEmail: string): Relations
     coupleId: data?.coupleId ?? null,
     displayName,
     notificationPrivacy: mapNotificationPrivacyPreference(data?.notificationPrivacy),
+    quickTipsEnabled: data?.quickTipsEnabled !== false,
     adultConfirmed: !!data?.adultConfirmedAt,
     privacyAccepted: !!data?.privacyAcceptedAt,
     safetyAccepted: !!data?.safetyAcceptedAt,
@@ -301,6 +302,16 @@ function mapCalendarEvent(document: any): CalendarEvent {
     startsAt: toMillis(data?.startsAt),
     endsAt: data?.endsAt ? toMillis(data?.endsAt) : null,
     allDay: Boolean(data?.allDay),
+    foodQuery: typeof data?.foodQuery === 'string' ? data.foodQuery : '',
+    foodInterestFor:
+      data?.foodInterestFor === 'partner' || data?.foodInterestFor === 'both'
+        ? data.foodInterestFor
+        : 'me',
+    restaurantPlaceId: typeof data?.restaurantPlaceId === 'string' ? data.restaurantPlaceId : null,
+    restaurantName: typeof data?.restaurantName === 'string' ? data.restaurantName : '',
+    restaurantAddress: typeof data?.restaurantAddress === 'string' ? data.restaurantAddress : '',
+    restaurantLatitude: typeof data?.restaurantLatitude === 'number' ? data.restaurantLatitude : null,
+    restaurantLongitude: typeof data?.restaurantLongitude === 'number' ? data.restaurantLongitude : null,
     status: data?.status === 'cancelled' ? 'cancelled' : 'active',
     createdAt: toMillis(data?.createdAt),
     updatedAt: toMillis(data?.updatedAt),
@@ -531,6 +542,28 @@ export type LoveActionLifecycleTarget = 'due' | 'performed' | 'confirmed' | 'app
 export type LoveActionConfirmationReaction = 'yep' | 'lovedIt' | 'letsTryAgain';
 export type LoveActionAppreciationReaction = 'thankYou' | 'madeMyDay' | 'morePlease';
 export type PushDevicePlatform = 'ios' | 'android';
+export type CalendarEventInput = {
+  title: string;
+  note: string;
+  startsAt: Date;
+  endsAt?: Date | null;
+  allDay: boolean;
+  foodQuery?: string;
+  foodInterestFor?: CalendarFoodInterestFor;
+  restaurantPlaceId?: string | null;
+  restaurantName?: string;
+  restaurantAddress?: string;
+  restaurantLatitude?: number | null;
+  restaurantLongitude?: number | null;
+};
+export type NearbyRestaurant = {
+  placeId: string;
+  name: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  googleMapsUri: string | null;
+};
 
 async function callRelationshipFunction<
   TRequest extends object,
@@ -991,6 +1024,22 @@ export async function markPartnerRevealSeen(user: User, coupleId: string) {
   );
 }
 
+export async function updateQuickTipsPreference(user: User, enabled: boolean) {
+  const email = requireUserEmail(user);
+
+  await setDoc(
+    doc(getFirestore(), 'users', user.uid),
+    {
+      email,
+      normalizedEmail: normalizeEmail(email),
+      quickTipsEnabled: enabled,
+      updatedAt: serverTimestamp(),
+      lastSeenAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+}
+
 export async function createLovePreference(user: User, input: LovePreferenceInput) {
   requireUserEmail(user);
 
@@ -1342,7 +1391,7 @@ export async function deleteMirrorMessage(user: User, message: MirrorMessage) {
 
 export async function createCalendarEvent(
   user: User,
-  event: { title: string; note: string; startsAt: Date; endsAt?: Date | null; allDay: boolean },
+  event: CalendarEventInput,
 ) {
   const firestore = getFirestore();
   const email = requireUserEmail(user);
@@ -1363,6 +1412,13 @@ export async function createCalendarEvent(
     startsAt: event.startsAt,
     endsAt: event.endsAt ?? null,
     allDay: event.allDay,
+    foodQuery: event.foodQuery?.trim() ?? '',
+    foodInterestFor: event.foodInterestFor ?? 'me',
+    restaurantPlaceId: event.restaurantPlaceId ?? null,
+    restaurantName: event.restaurantName?.trim() ?? '',
+    restaurantAddress: event.restaurantAddress?.trim() ?? '',
+    restaurantLatitude: typeof event.restaurantLatitude === 'number' ? event.restaurantLatitude : null,
+    restaurantLongitude: typeof event.restaurantLongitude === 'number' ? event.restaurantLongitude : null,
     status: 'active',
     createdByUserId: user.uid,
     createdByEmail: email,
@@ -1374,7 +1430,7 @@ export async function createCalendarEvent(
 export async function updateCalendarEvent(
   user: User,
   eventId: string,
-  event: { title: string; note: string; startsAt: Date; endsAt?: Date | null; allDay: boolean },
+  event: CalendarEventInput,
 ) {
   const firestore = getFirestore();
   const profile = useRelationshipStore.getState().profile;
@@ -1394,6 +1450,13 @@ export async function updateCalendarEvent(
     startsAt: event.startsAt,
     endsAt: event.endsAt ?? null,
     allDay: event.allDay,
+    foodQuery: event.foodQuery?.trim() ?? '',
+    foodInterestFor: event.foodInterestFor ?? 'me',
+    restaurantPlaceId: event.restaurantPlaceId ?? null,
+    restaurantName: event.restaurantName?.trim() ?? '',
+    restaurantAddress: event.restaurantAddress?.trim() ?? '',
+    restaurantLatitude: typeof event.restaurantLatitude === 'number' ? event.restaurantLatitude : null,
+    restaurantLongitude: typeof event.restaurantLongitude === 'number' ? event.restaurantLongitude : null,
     updatedAt: serverTimestamp(),
   });
 }
@@ -1406,6 +1469,18 @@ export async function deleteCalendarEvent(user: User, eventId: string) {
     : doc(firestore, 'users', user.uid, 'calendarEvents', eventId);
 
   await deleteDoc(eventRef);
+}
+
+export async function searchNearbyRestaurants(input: {
+  query: string;
+  latitude: number;
+  longitude: number;
+  radiusMiles: number;
+}) {
+  return callRelationshipFunction<
+    { query: string; latitude: number; longitude: number; radiusMiles: number },
+    { success: boolean; places: NearbyRestaurant[] }
+  >('searchNearbyRestaurants', input);
 }
 
 type InsightInput = {

@@ -11,6 +11,7 @@ export type RelationshipProfile = {
   coupleId: string | null;
   displayName: string;
   notificationPrivacy: NotificationPrivacyPreference;
+  quickTipsEnabled: boolean;
   adultConfirmed: boolean;
   privacyAccepted: boolean;
   safetyAccepted: boolean;
