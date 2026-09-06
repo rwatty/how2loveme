@@ -365,6 +365,75 @@ function mapLoveAction(document: any): LoveAction {
   };
 }
 
+function getSoloLoveActionStatus(input: LoveActionInput) {
+  const requestedStatus = mapLoveActionStatus(input.status);
+
+  if (requestedStatus !== 'proposed') {
+    return requestedStatus;
+  }
+
+  return input.nextDueAt && input.nextDueAt <= Date.now() ? 'due' : 'scheduled';
+}
+
+function buildSoloLoveActionDoc(user: User, email: string, input: LoveActionInput) {
+  const title = input.title.trim();
+
+  if (!title) {
+    throw new Error('Add a short Love Action title first.');
+  }
+
+  const timing = mapLovePreferenceTiming(input.timing);
+
+  return {
+    title,
+    area: mapLoveArea(input.area),
+    preferenceId: input.preferenceId ?? null,
+    notes: input.notes?.trim() ?? '',
+    importance: mapLovePreferenceImportance(input.importance),
+    frequency: mapLovePreferenceFrequency(input.frequency),
+    timing,
+    customTiming: timing === 'custom' ? input.customTiming?.trim() || null : null,
+    visibility: mapLovePreferenceVisibility(input.visibility),
+    status: getSoloLoveActionStatus(input),
+    nextDueAt: typeof input.nextDueAt === 'number' && Number.isFinite(input.nextDueAt) ? new Date(input.nextDueAt) : null,
+    lastCompletedAt:
+      typeof input.lastCompletedAt === 'number' && Number.isFinite(input.lastCompletedAt)
+        ? new Date(input.lastCompletedAt)
+        : null,
+    respondedAt: null,
+    respondedByUserId: null,
+    respondedByEmail: null,
+    confirmationReaction: null,
+    confirmationNote: '',
+    appreciationReaction: null,
+    appreciationNote: '',
+    proposedByUserId: user.uid,
+    proposedByEmail: email,
+    responsibleUserId: user.uid,
+    responsibleUserEmail: email,
+    recipientUserId: user.uid,
+    recipientUserEmail: email,
+  };
+}
+
+function assertSoloLoveActionTransition(action: LoveAction, targetStatus: LoveActionLifecycleTarget) {
+  if (targetStatus === 'due' && action.status !== 'scheduled') {
+    throw new Error('Only scheduled personal Love Actions can move into due.');
+  }
+
+  if (targetStatus === 'performed' && action.status !== 'due') {
+    throw new Error('Only due personal Love Actions can be marked done.');
+  }
+
+  if (targetStatus === 'confirmed' && action.status !== 'performed') {
+    throw new Error('Only completed personal Love Actions can be confirmed.');
+  }
+
+  if (targetStatus === 'appreciated' && action.status !== 'performed' && action.status !== 'confirmed') {
+    throw new Error('Only completed personal Love Actions can be appreciated.');
+  }
+}
+
 function mapInsightEntry(document: any): InsightEntry {
   const data = document.data();
   const visibility = data?.visibility;
@@ -524,7 +593,7 @@ export function startRelationshipSync(user: User) {
     limit(1),
   );
 
-  let activeCoupleId: string | null = null;
+  let activeSpaceKey: string | null = null;
   let unsubscribeMessages = () => {};
   let unsubscribeCalendar = () => {};
   let unsubscribeLoveActions = () => {};
@@ -608,11 +677,10 @@ export function startRelationshipSync(user: User) {
       state.setSyncing(false);
       state.setError('');
 
-      if (activeCoupleId === nextProfile.coupleId) {
+      const nextSpaceKey = nextProfile.coupleId ? `couple:${nextProfile.coupleId}` : `solo:${user.uid}`;
+
+      if (activeSpaceKey === nextSpaceKey) {
         if (!nextProfile.coupleId) {
-          useLoveActionStore.getState().setSyncing(false);
-          useMirrorMessageStore.getState().setSyncing(false);
-          useCalendarStore.getState().setSyncing(false);
           useInsightsStore.getState().setSyncingShared(false);
           useInsightsStore.getState().setSyncingSnapshots(false);
           state.setPartnerReveal(null);
@@ -627,21 +695,77 @@ export function startRelationshipSync(user: User) {
       stopMetricSnapshotsSync();
       stopPartnerRevealSync();
 
-      if (!nextProfile.coupleId) {
-        activeCoupleId = null;
-        useLoveActionStore.getState().setSyncing(false);
-        useMirrorMessageStore.getState().setSyncing(false);
-        useCalendarStore.getState().setSyncing(false);
-        useInsightsStore.getState().setSyncingShared(false);
-        useInsightsStore.getState().setSyncingSnapshots(false);
-        state.setPartnerReveal(null);
-        return;
-      }
-
-      activeCoupleId = nextProfile.coupleId;
+      activeSpaceKey = nextSpaceKey;
       useLoveActionStore.getState().setSyncing(true);
       useMirrorMessageStore.getState().setSyncing(true);
       useCalendarStore.getState().setSyncing(true);
+
+      if (!nextProfile.coupleId) {
+        useInsightsStore.getState().setSyncingShared(false);
+        useInsightsStore.getState().setSyncingSnapshots(false);
+        state.setPartnerReveal(null);
+
+        const personalMessagesQuery = query(
+          collection(firestore, 'users', user.uid, 'mirrorMessages'),
+          orderBy('createdAt', 'desc'),
+          limit(50),
+        );
+        const personalCalendarEventsQuery = query(
+          collection(firestore, 'users', user.uid, 'calendarEvents'),
+          orderBy('startsAt', 'asc'),
+          limit(250),
+        );
+        const personalLoveActionsQuery = query(
+          collection(firestore, 'users', user.uid, 'loveActions'),
+          orderBy('updatedAt', 'desc'),
+          limit(250),
+        );
+
+        unsubscribeMessages = onSnapshot(
+          personalMessagesQuery,
+          messageSnapshot => {
+            useMirrorMessageStore.getState().replaceMessages(messageSnapshot.docs.map(mapMessage));
+            useMirrorMessageStore.getState().setSyncing(false);
+          },
+          error => {
+            useRelationshipStore.getState().setError(
+              error.message ?? 'Unable to sync your personal Love Notes right now.',
+            );
+            useMirrorMessageStore.getState().setSyncing(false);
+          },
+        );
+
+        unsubscribeCalendar = onSnapshot(
+          personalCalendarEventsQuery,
+          eventSnapshot => {
+            useCalendarStore.getState().replaceEvents(eventSnapshot.docs.map(mapCalendarEvent));
+            useCalendarStore.getState().setSyncing(false);
+          },
+          error => {
+            useRelationshipStore.getState().setError(
+              error.message ?? 'Unable to sync your personal calendar right now.',
+            );
+            useCalendarStore.getState().setSyncing(false);
+          },
+        );
+
+        unsubscribeLoveActions = onSnapshot(
+          personalLoveActionsQuery,
+          actionSnapshot => {
+            useLoveActionStore.getState().replaceActions(actionSnapshot.docs.map(mapLoveAction));
+            useLoveActionStore.getState().setSyncing(false);
+          },
+          error => {
+            useRelationshipStore.getState().setError(
+              error.message ?? 'Unable to sync your personal Love Actions right now.',
+            );
+            useLoveActionStore.getState().setSyncing(false);
+          },
+        );
+
+        return;
+      }
+
       useInsightsStore.getState().setSyncingShared(true);
       useInsightsStore.getState().setSyncingSnapshots(true);
 
@@ -812,7 +936,7 @@ export function startRelationshipSync(user: User) {
     stopSharedInsightsSync();
     stopMetricSnapshotsSync();
     stopPartnerRevealSync();
-    activeCoupleId = null;
+    activeSpaceKey = null;
     useRelationshipStore.getState().setSyncing(false);
     useLoveProfileStore.getState().setSyncing(false);
     useLoveActionStore.getState().setSyncing(false);
@@ -915,7 +1039,20 @@ export async function deleteLovePreference(user: User, preferenceId: string) {
 }
 
 export async function createLoveAction(user: User, input: LoveActionInput) {
-  requireUserEmail(user);
+  const email = requireUserEmail(user);
+  const firestore = getFirestore();
+  const profile = useRelationshipStore.getState().profile;
+
+  if (!profile?.coupleId) {
+    const actionDoc = buildSoloLoveActionDoc(user, email, input);
+    const actionRef = await addDoc(collection(firestore, 'users', user.uid, 'loveActions'), {
+      ...actionDoc,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    return { success: true, actionId: actionRef.id };
+  }
 
   return callRelationshipFunction<LoveActionInput, { success: boolean; actionId: string }>('createLoveAction', {
     title: input.title,
@@ -936,6 +1073,41 @@ export async function createLoveAction(user: User, input: LoveActionInput) {
 
 export async function updateLoveAction(user: User, actionId: string, input: LoveActionInput) {
   requireUserEmail(user);
+  const firestore = getFirestore();
+  const profile = useRelationshipStore.getState().profile;
+
+  if (!profile?.coupleId) {
+    const existingAction = useLoveActionStore.getState().actions.find(action => action.id === actionId);
+    const title = input.title.trim();
+
+    if (!title) {
+      throw new Error('Add a short Love Action title first.');
+    }
+
+    const timing = mapLovePreferenceTiming(input.timing);
+
+    await updateDoc(doc(firestore, 'users', user.uid, 'loveActions', actionId), {
+      title,
+      area: mapLoveArea(input.area),
+      preferenceId: input.preferenceId ?? null,
+      notes: input.notes?.trim() ?? '',
+      importance: mapLovePreferenceImportance(input.importance),
+      frequency: mapLovePreferenceFrequency(input.frequency),
+      timing,
+      customTiming: timing === 'custom' ? input.customTiming?.trim() || null : null,
+      visibility: mapLovePreferenceVisibility(input.visibility),
+      nextDueAt: typeof input.nextDueAt === 'number' && Number.isFinite(input.nextDueAt) ? new Date(input.nextDueAt) : null,
+      lastCompletedAt:
+        typeof input.lastCompletedAt === 'number' && Number.isFinite(input.lastCompletedAt)
+          ? new Date(input.lastCompletedAt)
+          : existingAction?.lastCompletedAt
+            ? new Date(existingAction.lastCompletedAt)
+            : null,
+      updatedAt: serverTimestamp(),
+    });
+
+    return { success: true, actionId };
+  }
 
   return callRelationshipFunction<LoveActionInput & { actionId: string }, { success: boolean; actionId: string }>(
     'updateLoveAction',
@@ -960,6 +1132,13 @@ export async function updateLoveAction(user: User, actionId: string, input: Love
 
 export async function deleteLoveAction(user: User, actionId: string) {
   requireUserEmail(user);
+  const firestore = getFirestore();
+  const profile = useRelationshipStore.getState().profile;
+
+  if (!profile?.coupleId) {
+    await deleteDoc(doc(firestore, 'users', user.uid, 'loveActions', actionId));
+    return { success: true, actionId };
+  }
 
   return callRelationshipFunction<{ actionId: string }, { success: boolean; actionId: string }>('deleteLoveAction', {
     actionId,
@@ -993,7 +1172,49 @@ export async function transitionLoveActionStatus(
     appreciationNote?: string;
   },
 ) {
-  requireUserEmail(user);
+  const email = requireUserEmail(user);
+  const profile = useRelationshipStore.getState().profile;
+
+  if (!profile?.coupleId) {
+    const firestore = getFirestore();
+    const action = useLoveActionStore.getState().actions.find(item => item.id === actionId);
+
+    if (!action) {
+      throw new Error('That Love Action is no longer available.');
+    }
+
+    assertSoloLoveActionTransition(action, targetStatus);
+
+    const payload: Record<string, any> = {
+      status: targetStatus,
+      updatedAt: serverTimestamp(),
+    };
+
+    if (targetStatus === 'performed') {
+      payload.lastCompletedAt = serverTimestamp();
+    }
+
+    if (targetStatus === 'confirmed') {
+      payload.respondedAt = serverTimestamp();
+      payload.respondedByUserId = user.uid;
+      payload.respondedByEmail = email;
+      payload.confirmationReaction = options?.confirmationReaction ?? action.confirmationReaction ?? 'yep';
+      payload.confirmationNote = options?.confirmationNote ?? action.confirmationNote ?? '';
+    }
+
+    if (targetStatus === 'appreciated') {
+      payload.respondedAt = serverTimestamp();
+      payload.respondedByUserId = user.uid;
+      payload.respondedByEmail = email;
+      payload.confirmationReaction = action.confirmationReaction ?? 'yep';
+      payload.confirmationNote = action.confirmationNote ?? '';
+      payload.appreciationReaction = options?.appreciationReaction ?? action.appreciationReaction ?? 'thankYou';
+      payload.appreciationNote = options?.appreciationNote ?? action.appreciationNote ?? '';
+    }
+
+    await updateDoc(doc(firestore, 'users', user.uid, 'loveActions', actionId), payload);
+    return { success: true, actionId, status: targetStatus };
+  }
 
   return callRelationshipFunction<
     {
@@ -1087,12 +1308,11 @@ export async function sendMirrorMessage(
   const firestore = getFirestore();
   const email = requireUserEmail(user);
   const profile = useRelationshipStore.getState().profile;
+  const collectionRef = profile?.coupleId
+    ? collection(firestore, 'couples', profile.coupleId, 'mirrorMessages')
+    : collection(firestore, 'users', user.uid, 'mirrorMessages');
 
-  if (!profile?.coupleId) {
-    throw new Error('Connect with your partner before sending mirror notes.');
-  }
-
-  await addDoc(collection(firestore, 'couples', profile.coupleId, 'mirrorMessages'), {
+  await addDoc(collectionRef, {
     text: message.text,
     strokes: serializeMirrorStrokes(message.strokes),
     senderId: user.uid,
@@ -1109,15 +1329,15 @@ export async function deleteMirrorMessage(user: User, message: MirrorMessage) {
   const firestore = getFirestore();
   const profile = useRelationshipStore.getState().profile;
 
-  if (!profile?.coupleId) {
-    throw new Error('Connect with your partner before managing mirror notes.');
-  }
-
   if (message.senderId !== user.uid) {
     throw new Error('Only the sender can delete this mirror note.');
   }
 
-  await deleteDoc(doc(firestore, 'couples', profile.coupleId, 'mirrorMessages', message.id));
+  const messageRef = profile?.coupleId
+    ? doc(firestore, 'couples', profile.coupleId, 'mirrorMessages', message.id)
+    : doc(firestore, 'users', user.uid, 'mirrorMessages', message.id);
+
+  await deleteDoc(messageRef);
 }
 
 export async function createCalendarEvent(
@@ -1127,18 +1347,17 @@ export async function createCalendarEvent(
   const firestore = getFirestore();
   const email = requireUserEmail(user);
   const profile = useRelationshipStore.getState().profile;
-
-  if (!profile?.coupleId) {
-    throw new Error('Connect with your partner before adding calendar moments.');
-  }
-
   const title = event.title.trim();
 
   if (!title) {
     throw new Error('Add an event title first.');
   }
 
-  await addDoc(collection(firestore, 'couples', profile.coupleId, 'calendarEvents'), {
+  const collectionRef = profile?.coupleId
+    ? collection(firestore, 'couples', profile.coupleId, 'calendarEvents')
+    : collection(firestore, 'users', user.uid, 'calendarEvents');
+
+  await addDoc(collectionRef, {
     title,
     note: event.note.trim(),
     startsAt: event.startsAt,
@@ -1159,18 +1378,17 @@ export async function updateCalendarEvent(
 ) {
   const firestore = getFirestore();
   const profile = useRelationshipStore.getState().profile;
-
-  if (!profile?.coupleId) {
-    throw new Error('Connect with your partner before updating calendar moments.');
-  }
-
   const title = event.title.trim();
 
   if (!title) {
     throw new Error('Add an event title first.');
   }
 
-  await updateDoc(doc(firestore, 'couples', profile.coupleId, 'calendarEvents', eventId), {
+  const eventRef = profile?.coupleId
+    ? doc(firestore, 'couples', profile.coupleId, 'calendarEvents', eventId)
+    : doc(firestore, 'users', user.uid, 'calendarEvents', eventId);
+
+  await updateDoc(eventRef, {
     title,
     note: event.note.trim(),
     startsAt: event.startsAt,
@@ -1183,12 +1401,11 @@ export async function updateCalendarEvent(
 export async function deleteCalendarEvent(user: User, eventId: string) {
   const firestore = getFirestore();
   const profile = useRelationshipStore.getState().profile;
+  const eventRef = profile?.coupleId
+    ? doc(firestore, 'couples', profile.coupleId, 'calendarEvents', eventId)
+    : doc(firestore, 'users', user.uid, 'calendarEvents', eventId);
 
-  if (!profile?.coupleId) {
-    throw new Error('Connect with your partner before managing calendar moments.');
-  }
-
-  await deleteDoc(doc(firestore, 'couples', profile.coupleId, 'calendarEvents', eventId));
+  await deleteDoc(eventRef);
 }
 
 type InsightInput = {

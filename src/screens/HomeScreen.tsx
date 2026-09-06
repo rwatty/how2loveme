@@ -449,7 +449,7 @@ export default function HomeScreen() {
   const summaryRow = (
     <View style={styles.summaryRow}>
       <View style={styles.summaryPill}>
-        <Text style={styles.summaryLabel}>Shared {messages.length}</Text>
+        <Text style={styles.summaryLabel}>{profile?.coupleId ? `Shared ${messages.length}` : `Notes ${messages.length}`}</Text>
       </View>
       <View style={styles.summaryPill}>
         <Text style={styles.summaryLabel}>Yours {ownMessagesCount}</Text>
@@ -464,7 +464,7 @@ export default function HomeScreen() {
         <Text style={styles.summaryLabel}>Reminders {reminderFeed.length}</Text>
       </View>
       <View style={styles.summaryPill}>
-        <Text style={styles.summaryLabel}>Awaiting you {pendingProposalInbox.length}</Text>
+        <Text style={styles.summaryLabel}>{profile?.coupleId ? `Awaiting you ${pendingProposalInbox.length}` : `Actions ${loveActions.length}`}</Text>
       </View>
       <View style={styles.summaryPill}>
         <Text style={styles.summaryLabel}>{profile?.coupleId ? 'Connected' : 'Solo'}</Text>
@@ -479,7 +479,7 @@ export default function HomeScreen() {
           <Text variant="headlineMedium" style={styles.header}>
             Home
           </Text>
-          <Text style={styles.subheader}>Warming your Love Notes and syncing your shared space.</Text>
+          <Text style={styles.subheader}>Warming your Love Notes and syncing your Love space.</Text>
           {summaryRow}
         </ScrollView>
       </SafeAreaView>
@@ -494,15 +494,15 @@ export default function HomeScreen() {
             Home
           </Text>
           <Text style={styles.subheader}>
-            Connect with your partner in Us to unlock shared Love Notes and live sync.
+            Your personal Love Notes and Love Actions live here now. Connect with your partner in Us when you want shared sync.
           </Text>
           {summaryRow}
           <Surface style={styles.emptyHero} elevation={0}>
             <Text variant="titleMedium" style={styles.emptyTitle}>
-              Your Love Notes are waiting
+              Your shared Home is waiting
             </Text>
             <Text style={styles.emptyBody}>
-              Send a partner invite by email from Us, then your Love Notes and Love Actions will sync across both accounts.
+              Keep building personal Love Notes and Love Actions now, then send a partner invite from Us when you want both accounts to sync together.
             </Text>
             <Button mode="contained" onPress={() => navigation.navigate('Us')} style={styles.primaryButton}>
               Connect in Us

@@ -294,10 +294,10 @@ function getEventSelectedDayStatus(event: CalendarEvent, dateKey: string) {
 
 function getAgendaLabel(count: number) {
   if (count === 1) {
-    return '1 shared plan';
+    return '1 plan';
   }
 
-  return `${count} shared plans`;
+  return `${count} plans`;
 }
 
 function getDayBadgeLabel(count: number, spanningCount: number) {
@@ -329,7 +329,7 @@ function getMonthSummaryLabel(count: number) {
     return 'Start shaping this month together';
   }
 
-  return count === 1 ? '1 shared plan this month' : `${count} shared plans this month`;
+  return count === 1 ? '1 plan this month' : `${count} plans this month`;
 }
 
 function getMonthChipLabel(event: CalendarEvent) {
@@ -345,7 +345,7 @@ function getMonthChipLabel(event: CalendarEvent) {
 function getDayAccessibilityLabel(day: CalendarDayCell, eventMeta?: DayEventMeta, selected?: boolean, dueCount = 0) {
   const dateLabel = formatSelectedDate(day.dateKey);
   const count = eventMeta?.count ?? 0;
-  const planLabel = count === 0 ? 'No shared plans' : getAgendaLabel(count);
+  const planLabel = count === 0 ? 'No plans yet' : getAgendaLabel(count);
   const dueLabel = dueCount === 0 ? 'No Love Actions due' : `${dueCount} Love Action${dueCount === 1 ? '' : 's'} due`;
   return `${dateLabel}. ${planLabel}. ${dueLabel}.${selected ? ' Selected.' : ''}`;
 }
@@ -545,6 +545,7 @@ export default function CalendarScreen() {
   const [activePicker, setActivePicker] = useState<PickerTarget>(null);
   const [sectionOffsets, setSectionOffsets] = useState<Record<string, number>>({});
   const scrollViewRef = useRef<any>(null);
+  const isConnected = !!profile?.coupleId;
 
   const activeEvents = previewMode ? previewEvents : events;
   const monthGrid = useMemo(() => getMonthGrid(visibleMonthKey), [visibleMonthKey]);
@@ -814,17 +815,12 @@ export default function CalendarScreen() {
           return;
         }
 
-        if (!profile?.coupleId) {
-          setSnackbar('Connect with your partner in Us before adding shared plans.');
-          return;
-        }
-
         if (editingEvent) {
           await updateCalendarEvent(user, editingEvent.id, payload);
-          setSnackbar('Shared plan updated.');
+          setSnackbar(isConnected ? 'Shared plan updated.' : 'Personal plan updated.');
         } else {
           await createCalendarEvent(user, payload);
-          setSnackbar('Shared plan added to your calendar.');
+          setSnackbar(isConnected ? 'Shared plan added to your calendar.' : 'Personal plan added to your calendar.');
         }
       }
 
@@ -833,7 +829,7 @@ export default function CalendarScreen() {
       setActivePicker(null);
       setDialogVisible(false);
     } catch (error: any) {
-      setSnackbar(error.message ?? 'Unable to save that shared plan right now.');
+      setSnackbar(error.message ?? 'Unable to save that plan right now.');
     } finally {
       setSaving(false);
     }
@@ -853,7 +849,7 @@ export default function CalendarScreen() {
         setSnackbar('Preview plan removed.');
       } else {
         await deleteCalendarEvent(user!, event.id);
-        setSnackbar('Shared plan removed.');
+        setSnackbar(isConnected ? 'Shared plan removed.' : 'Personal plan removed.');
       }
 
       if (editingEvent?.id === event.id) {
@@ -861,7 +857,7 @@ export default function CalendarScreen() {
         setActivePicker(null);
       }
     } catch (error: any) {
-      setSnackbar(error.message ?? 'Unable to remove that shared plan right now.');
+      setSnackbar(error.message ?? 'Unable to remove that plan right now.');
     } finally {
       setDeletingEventId(null);
     }
@@ -943,51 +939,8 @@ export default function CalendarScreen() {
         <Text variant="headlineMedium" style={styles.header}>
           Calendar
         </Text>
-        <Text style={styles.subheader}>Warming up your shared calendar and syncing upcoming plans.</Text>
+        <Text style={styles.subheader}>Warming up your calendar and syncing upcoming plans.</Text>
         {summaryRow}
-      </ScrollView>
-    );
-  }
-
-  if (!profile?.coupleId && !previewMode) {
-    return (
-      <ScrollView style={styles.screen} contentContainerStyle={scrollContentStyle}>
-        <Text variant="headlineMedium" style={styles.header}>
-          Calendar
-        </Text>
-        <Text style={styles.subheader}>
-          Build rituals together with a visual month view once you connect with your partner.
-        </Text>
-        {summaryRow}
-        <Surface style={styles.emptyHero} elevation={2}>
-          <Text variant="titleLarge" style={styles.emptyTitle}>
-            Your shared month is waiting
-          </Text>
-          <Text style={styles.emptyBody}>
-            Connect in Us first, then you can drop date nights, check-ins, weekends away, and little future plans straight onto the calendar.
-          </Text>
-          <View style={styles.emptyActionsRow}>
-            <Button
-              mode="contained"
-              onPress={() => navigation.navigate('Us')}
-              style={styles.primaryButton}
-              accessibilityLabel="Open the Us tab to connect with your partner"
-            >
-              Connect in Us
-            </Button>
-            {__DEV__ ? (
-              <Button
-                mode="outlined"
-                onPress={launchPreviewMode}
-                style={styles.secondaryButton}
-                accessibilityLabel="Preview the calendar experience with local sample plans"
-              >
-                Preview Calendar UX
-              </Button>
-            ) : null}
-          </View>
-        </Surface>
-        {!!relationshipError && <Text style={styles.errorText}>{relationshipError}</Text>}
       </ScrollView>
     );
   }
@@ -1061,7 +1014,7 @@ export default function CalendarScreen() {
                   onPress={() => openCreateDialog()}
                   style={styles.addPlanPill}
                   labelStyle={styles.toolbarButtonLabel}
-                  accessibilityLabel="Add a shared calendar plan"
+                  accessibilityLabel={isConnected ? 'Add a shared calendar plan' : 'Add a personal calendar plan'}
                 >
                   Add
                 </Button>
@@ -1080,7 +1033,7 @@ export default function CalendarScreen() {
                   onPress={() => handleQuickAction(action)}
                   style={styles.quickActionButton}
                   labelStyle={styles.quickActionLabel}
-                  accessibilityLabel={`Quick add a shared plan for ${action.label.toLowerCase()}`}
+                  accessibilityLabel={`Quick add a ${isConnected ? 'shared' : 'personal'} plan for ${action.label.toLowerCase()}`}
                 >
                   {action.label}
                 </Button>
@@ -1231,7 +1184,7 @@ export default function CalendarScreen() {
                     Nothing planned yet
                   </Text>
                   <Text style={styles.emptyAgendaBody}>
-                    Tap Add to anchor a date night, overnight reset, check-in, or shared ritual on this day.
+                    Tap Add to anchor a date night, check-in, solo reset, or shared ritual on this day.
                   </Text>
                 </Surface>
               ) : (
@@ -1248,7 +1201,7 @@ export default function CalendarScreen() {
                             style={styles.eventPressable}
                             accessibilityRole="button"
                             accessibilityLabel={`${event.title}. ${formatEventTime(event)}.${selectedDayStatus ? ` ${selectedDayStatus}.` : ''}`}
-                            accessibilityHint="Open this shared plan to edit details."
+                            accessibilityHint="Open this plan to edit details."
                           >
                             <View style={styles.eventHeaderRow}>
                               <View style={styles.eventTextWrap}>
@@ -1325,7 +1278,7 @@ export default function CalendarScreen() {
                     No Love Actions due here
                   </Text>
                   <Text style={styles.emptyAgendaBody}>
-                    When you schedule shared Love Actions with a due date, they will appear on the matching day here.
+                    Love Actions with a due date will appear on the matching day here.
                   </Text>
                 </Surface>
               ) : (
@@ -1368,7 +1321,7 @@ export default function CalendarScreen() {
             </Card.Content>
           </Card>
         </View>
-        {syncing && <Text style={styles.syncText}>Syncing your shared calendar...</Text>}
+        {syncing && <Text style={styles.syncText}>Syncing your calendar...</Text>}
       </ScrollView>
       <JumpToSectionFab sections={visibleJumpSections} onSelectSection={handleJumpToSection} />
       <Portal>
@@ -1382,7 +1335,7 @@ export default function CalendarScreen() {
           }}
           style={styles.dialog}
         >
-          <Dialog.Title>{editingEvent ? 'Edit shared plan' : 'Add shared plan'}</Dialog.Title>
+          <Dialog.Title>{editingEvent ? (isConnected ? 'Edit shared plan' : 'Edit personal plan') : isConnected ? 'Add shared plan' : 'Add personal plan'}</Dialog.Title>
           <Dialog.ScrollArea style={styles.dialogScrollArea}>
             <ScrollView
               keyboardShouldPersistTaps="handled"
@@ -1405,7 +1358,7 @@ export default function CalendarScreen() {
                   accessibilityLabel="Plan title"
                 />
                 <HelperText type="error" visible={titleError}>
-                  Add a title for this shared plan.
+                  Add a title for this plan.
                 </HelperText>
                 <TextInput
                   mode="outlined"
