@@ -2521,7 +2521,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   scoreBarsRow: {
-    minHeight: SCORE_CHART_HEIGHT,
+    height: SCORE_CHART_HEIGHT,
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-between',
@@ -2529,7 +2529,7 @@ const styles = StyleSheet.create({
   },
   scoreBarColumn: {
     flex: 1,
-    height: '100%',
+    alignSelf: 'stretch',
     justifyContent: 'flex-end',
     alignItems: 'center',
   },
