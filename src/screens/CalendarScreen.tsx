@@ -706,8 +706,6 @@ export default function CalendarScreen() {
   const [activePicker, setActivePicker] = useState<PickerTarget>(null);
   const [sectionOffsets, setSectionOffsets] = useState<Record<string, number>>({});
   const scrollViewRef = useRef<any>(null);
-  const sectionRefs = useRef<Record<string, any>>({});
-  const scrollOffsetRef = useRef(0);
   const isConnected = !!profile?.coupleId;
 
   const activeEvents = previewMode ? previewEvents : events;
@@ -1198,25 +1196,9 @@ export default function CalendarScreen() {
     setSectionOffsets(current => (current[key] === nextY ? current : { ...current, [key]: nextY }));
   };
 
-  const setSectionRef = (key: string) => (node: any) => {
-    sectionRefs.current[key] = node;
-  };
-
   const visibleJumpSections = CALENDAR_JUMP_SECTIONS.filter(section => sectionOffsets[section.key] !== undefined);
 
   const handleJumpToSection = (key: string) => {
-    const targetNode = sectionRefs.current[key];
-
-    if (targetNode?.measureInWindow && scrollViewRef.current?.measureInWindow) {
-      scrollViewRef.current.measureInWindow((_: number, scrollY: number) => {
-        targetNode.measureInWindow((__: number, targetY: number) => {
-          const nextY = targetY - scrollY + scrollOffsetRef.current;
-          scrollViewRef.current?.scrollTo({ y: Math.max(0, nextY - 12), animated: true });
-        });
-      });
-      return;
-    }
-
     const targetY = sectionOffsets[key];
 
     if (typeof targetY === 'number') {
@@ -1242,10 +1224,6 @@ export default function CalendarScreen() {
         ref={scrollViewRef}
         style={styles.screen}
         contentContainerStyle={scrollContentStyle}
-        onScroll={event => {
-          scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
-        }}
-        scrollEventThrottle={16}
       >
         {summaryRow}
         {!!relationshipError && !previewMode && <Text style={styles.errorText}>{relationshipError}</Text>}
@@ -1266,7 +1244,7 @@ export default function CalendarScreen() {
             </View>
           </Surface>
         ) : null}
-        <View ref={setSectionRef('month')} onLayout={registerSection('month')}>
+        <View onLayout={registerSection('month')}>
           <Surface style={styles.hero} elevation={1}>
             <View style={styles.monthToolbar}>
               <View style={styles.yearPill}>
@@ -1443,7 +1421,7 @@ export default function CalendarScreen() {
             </View>
           </Surface>
         </View>
-        <View ref={setSectionRef('agenda')} onLayout={registerSection('agenda')}>
+        <View onLayout={registerSection('agenda')}>
           <Card style={styles.agendaCard}>
             <Card.Content>
               <View style={styles.agendaHeaderRow}>
@@ -1578,7 +1556,7 @@ export default function CalendarScreen() {
             </Card.Content>
           </Card>
         </View>
-        <View ref={setSectionRef('dueActions')} onLayout={registerSection('dueActions')}>
+        <View onLayout={registerSection('dueActions')}>
           <Card style={styles.agendaCard}>
             <Card.Content>
               <View style={styles.agendaHeaderRow}>

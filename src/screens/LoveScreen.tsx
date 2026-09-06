@@ -295,8 +295,6 @@ export default function LoveScreen() {
   const [transitioningActionId, setTransitioningActionId] = useState<string | null>(null);
   const [sectionOffsets, setSectionOffsets] = useState<Record<string, number>>({});
   const scrollViewRef = useRef<any>(null);
-  const sectionRefs = useRef<Record<string, any>>({});
-  const scrollOffsetRef = useRef(0);
   const trimmedMessage = messageText.trim();
   const trimmedPreference = preferenceText.trim();
   const trimmedActionTitle = actionTitle.trim();
@@ -729,27 +727,11 @@ export default function LoveScreen() {
     setSectionOffsets(current => (current[key] === nextY ? current : { ...current, [key]: nextY }));
   };
 
-  const setSectionRef = (key: string) => (node: any) => {
-    sectionRefs.current[key] = node;
-  };
-
   const visibleJumpSections = LOVE_JUMP_SECTIONS.map(section =>
     section.key === 'actions' ? { ...section, label: isConnected ? 'Shared Actions' : 'Love Actions' } : section,
   ).filter(section => sectionOffsets[section.key] !== undefined);
 
   const handleJumpToSection = (key: string) => {
-    const targetNode = sectionRefs.current[key];
-
-    if (targetNode?.measureInWindow && scrollViewRef.current?.measureInWindow) {
-      scrollViewRef.current.measureInWindow((_: number, scrollY: number) => {
-        targetNode.measureInWindow((__: number, targetY: number) => {
-          const nextY = targetY - scrollY + scrollOffsetRef.current;
-          scrollViewRef.current?.scrollTo({ y: Math.max(0, nextY - 12), animated: true });
-        });
-      });
-      return;
-    }
-
     const targetY = sectionOffsets[key];
 
     if (typeof targetY === 'number') {
@@ -767,10 +749,6 @@ export default function LoveScreen() {
           scrollEnabled={!mirrorGestureActive}
           style={styles.scrollView}
           contentContainerStyle={styles.content}
-          onScroll={event => {
-            scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
-          }}
-          scrollEventThrottle={16}
         >
           <Text variant="headlineMedium" style={styles.header}>
             Love
@@ -814,7 +792,7 @@ export default function LoveScreen() {
               </Card.Content>
             </Card>
           ) : null}
-          <View ref={setSectionRef('profile')} onLayout={registerSection('profile')}>
+          <View onLayout={registerSection('profile')}>
             <Card style={styles.foundationCard}>
               <Card.Content style={styles.cardContent}>
                 <Text variant="titleMedium" style={styles.cardTitle}>
@@ -939,7 +917,7 @@ export default function LoveScreen() {
               </Card.Content>
             </Card>
           </View>
-          <View ref={setSectionRef('library')} onLayout={registerSection('library')}>
+          <View onLayout={registerSection('library')}>
             <Card style={styles.libraryCard}>
               <Card.Content style={styles.cardContent}>
                 <Text variant="titleMedium" style={styles.cardTitle}>
@@ -1053,7 +1031,7 @@ export default function LoveScreen() {
               </Card.Content>
             </Card>
           </View>
-          <View ref={setSectionRef('actions')} onLayout={registerSection('actions')}>
+          <View onLayout={registerSection('actions')}>
             <Card style={styles.foundationCard}>
               <Card.Content style={styles.cardContent}>
                 <Text variant="titleMedium" style={styles.cardTitle}>
@@ -1292,7 +1270,7 @@ export default function LoveScreen() {
               </Card.Content>
             </Card>
           </View>
-          <View ref={setSectionRef('notes')} onLayout={registerSection('notes')}>
+          <View onLayout={registerSection('notes')}>
             <Surface style={styles.hero} elevation={0}>
             <Text variant="titleMedium" style={styles.heroTitle}>
               Love Notes
@@ -1422,7 +1400,7 @@ export default function LoveScreen() {
               </Card.Content>
             </Card>
           </View>
-          <View ref={setSectionRef('recentNotes')} onLayout={registerSection('recentNotes')}>
+          <View onLayout={registerSection('recentNotes')}>
             <Card style={styles.archiveCard}>
               <Card.Content>
                 <Text variant="titleMedium" style={styles.cardTitle}>

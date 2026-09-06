@@ -824,8 +824,6 @@ export default function InsightsScreen() {
   const [snackbar, setSnackbar] = useState('');
   const [sectionOffsets, setSectionOffsets] = useState<Record<string, number>>({});
   const scrollViewRef = useRef<any>(null);
-  const sectionRefs = useRef<Record<string, any>>({});
-  const scrollOffsetRef = useRef(0);
   const isConnected = !!profile?.coupleId;
 
   const writtenCount = useMemo(
@@ -974,10 +972,6 @@ export default function InsightsScreen() {
     setSectionOffsets(current => (current[key] === nextY ? current : { ...current, [key]: nextY }));
   };
 
-  const setSectionRef = (key: string) => (node: any) => {
-    sectionRefs.current[key] = node;
-  };
-
   const visibleJumpSections = INSIGHTS_JUMP_SECTIONS.map(section => {
     if (section.key === 'pulse') {
       return { ...section, label: isConnected ? 'Relationship Pulse' : 'Personal Pulse' };
@@ -991,18 +985,6 @@ export default function InsightsScreen() {
   }).filter(section => sectionOffsets[section.key] !== undefined);
 
   const handleJumpToSection = (key: string) => {
-    const targetNode = sectionRefs.current[key];
-
-    if (targetNode?.measureInWindow && scrollViewRef.current?.measureInWindow) {
-      scrollViewRef.current.measureInWindow((_: number, scrollY: number) => {
-        targetNode.measureInWindow((__: number, targetY: number) => {
-          const nextY = targetY - scrollY + scrollOffsetRef.current;
-          scrollViewRef.current?.scrollTo({ y: Math.max(0, nextY - 12), animated: true });
-        });
-      });
-      return;
-    }
-
     const targetY = sectionOffsets[key];
 
     if (typeof targetY === 'number') {
@@ -1206,10 +1188,6 @@ export default function InsightsScreen() {
           contentInsetAdjustmentBehavior="never"
           style={styles.scrollView}
           contentContainerStyle={styles.content}
-          onScroll={event => {
-            scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
-          }}
-          scrollEventThrottle={16}
         >
           <Text variant="headlineMedium" style={styles.header}>
             Insights
@@ -1249,7 +1227,7 @@ export default function InsightsScreen() {
               </Card.Content>
             </Card>
           ) : null}
-          <View ref={setSectionRef('pulse')} onLayout={registerSection('pulse')}>
+          <View onLayout={registerSection('pulse')}>
             <Card style={styles.archiveCard}>
               <Card.Content>
                 <SectionHeading
@@ -1310,7 +1288,7 @@ export default function InsightsScreen() {
               </Card.Content>
             </Card>
           </View>
-          <View ref={setSectionRef('score')} onLayout={registerSection('score')}>
+          <View onLayout={registerSection('score')}>
             <Card style={styles.archiveCard}>
               <Card.Content>
                 <SectionHeading
@@ -1419,7 +1397,7 @@ export default function InsightsScreen() {
               </Card.Content>
             </Card>
           </View>
-          <View ref={setSectionRef('trends')} onLayout={registerSection('trends')}>
+          <View onLayout={registerSection('trends')}>
             <Card style={styles.archiveCard}>
               <Card.Content>
                 <SectionHeading
@@ -1457,7 +1435,7 @@ export default function InsightsScreen() {
               </Card.Content>
             </Card>
           </View>
-          <View ref={setSectionRef('coaching')} onLayout={registerSection('coaching')}>
+          <View onLayout={registerSection('coaching')}>
             <Card style={styles.archiveCard}>
               <Card.Content>
                 <SectionHeading
@@ -1605,7 +1583,7 @@ export default function InsightsScreen() {
               </Card.Content>
             </Card>
           </View>
-          <View ref={setSectionRef('history')} onLayout={registerSection('history')}>
+          <View onLayout={registerSection('history')}>
             <Card style={styles.archiveCard}>
               <Card.Content>
                 <SectionHeading
@@ -1643,7 +1621,7 @@ export default function InsightsScreen() {
               </Card.Content>
             </Card>
           </View>
-          <View ref={setSectionRef('checkin')} onLayout={registerSection('checkin')}>
+          <View onLayout={registerSection('checkin')}>
             <Surface style={styles.hero} elevation={0}>
               <View style={styles.heroHeaderRow}>
                 <View style={styles.sectionIconWrap}>
@@ -1808,7 +1786,7 @@ export default function InsightsScreen() {
               </Card.Content>
             </Card>
           </View>
-          <View ref={setSectionRef('saved')} onLayout={registerSection('saved')}>
+          <View onLayout={registerSection('saved')}>
             <Card style={styles.archiveCard}>
               <Card.Content>
                 <SectionHeading
