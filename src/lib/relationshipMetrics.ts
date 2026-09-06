@@ -512,6 +512,7 @@ function buildCoachingRecommendations(input: {
   completedActionCount: number;
   appreciatedActionCount: number;
   trendDelta: number;
+  isConnected: boolean;
 }) {
   const recommendations: RecommendationCandidate[] = [];
   const repairPrompt = getPromptSuggestion(input.weakestArea ?? input.dominantArea, 'repair');
@@ -519,7 +520,7 @@ function buildCoachingRecommendations(input: {
   const reconnectPrompt = getPromptSuggestion(input.weakestArea ?? input.dominantArea, 'reconnect');
   const appreciationPrompt = getPromptSuggestion(input.dominantArea ?? input.weakestArea, 'gratitude');
 
-  if (input.sharedInsightCount === 0 || input.sharedReflectionRatio < 35) {
+  if (input.isConnected && (input.sharedInsightCount === 0 || input.sharedReflectionRatio < 35)) {
     recommendations.push({
       id: 'share-reflection',
       priority: 92,
@@ -722,6 +723,7 @@ export function buildScoreBreakdown(input: {
   notes: MirrorMessage[];
   windowStart: number;
   now?: number;
+  isConnected?: boolean;
 }): ScoreBreakdown {
   const now = input.now ?? Date.now();
   const measuredActions = input.actions.filter(action => isMeasuredAction(action, input.windowStart));
@@ -832,6 +834,7 @@ export function buildScoreBreakdown(input: {
     completedActionCount: completedActions.length,
     appreciatedActionCount: appreciatedActions.length,
     trendDelta,
+    isConnected: input.isConnected ?? true,
   });
   const componentScores: ScoreComponent[] = [
     {
@@ -898,6 +901,7 @@ export function buildPulseSummary(input: {
   score: number;
   windowStart: number;
   trendDelta?: number;
+  now?: number;
 }): PulseSummary {
   const recentEntries = input.entries
     .filter(entry => entry.createdAt >= input.windowStart)
@@ -920,7 +924,7 @@ export function buildPulseSummary(input: {
             : 'strained';
   const uniqueDays = Array.from(new Set(recentEntries.map(entry => toDayKey(entry.createdAt))));
   let streak = 0;
-  const cursor = new Date();
+  const cursor = new Date(input.now ?? Date.now());
 
   while (true) {
     const dayKey = cursor.toISOString().slice(0, 10);
@@ -1242,6 +1246,65 @@ export function buildHistoryFeed(input: {
   return [...noteEvents, ...insightEvents, ...actionEvents]
     .sort((left, right) => right.timestamp - left.timestamp)
     .slice(0, 12);
+}
+
+export function buildLiveMetricChartPoints(input: {
+  actions: LoveAction[];
+  insights: InsightEntry[];
+  notes: MirrorMessage[];
+  window: MetricsWindow;
+  now?: number;
+  isConnected?: boolean;
+}) {
+  const now = input.now ?? Date.now();
+  const windowStart = getMetricsWindowStart(input.window, now);
+  const dayKeys = new Set<string>();
+
+  input.insights
+    .filter(entry => entry.createdAt >= windowStart && entry.createdAt <= now)
+    .forEach(entry => dayKeys.add(toDayKey(entry.createdAt)));
+  input.notes
+    .filter(note => note.createdAt >= windowStart && note.createdAt <= now)
+    .forEach(note => dayKeys.add(toDayKey(note.createdAt)));
+  input.actions
+    .filter(action => {
+      const timestamp = getActionMeasurementTimestamp(action);
+      return timestamp >= windowStart && timestamp <= now && action.status !== 'cancelled';
+    })
+    .forEach(action => dayKeys.add(toDayKey(getActionMeasurementTimestamp(action))));
+
+  return Array.from(dayKeys)
+    .sort()
+    .slice(-12)
+    .map(dayKey => {
+      const [year, month, day] = dayKey.split('-').map(Number);
+      const dayEnd = new Date(year, (month || 1) - 1, day || 1, 23, 59, 59, 999).getTime();
+      const rollingWindowStart = getMetricsWindowStart(input.window, dayEnd);
+      const scoreBreakdown = buildScoreBreakdown({
+        actions: input.actions.filter(action => getActionMeasurementTimestamp(action) <= dayEnd),
+        insights: input.insights.filter(entry => entry.createdAt <= dayEnd),
+        notes: input.notes.filter(note => note.createdAt <= dayEnd),
+        windowStart: rollingWindowStart,
+        now: dayEnd,
+        isConnected: input.isConnected,
+      });
+      const pulseSummary = buildPulseSummary({
+        entries: input.insights.filter(entry => entry.createdAt <= dayEnd),
+        score: scoreBreakdown.score,
+        windowStart: rollingWindowStart,
+        trendDelta: scoreBreakdown.trendDelta,
+        now: dayEnd,
+      });
+
+      return {
+        id: `live-${dayKey}`,
+        label: formatChartLabel(dayKey),
+        score: scoreBreakdown.score,
+        connection: pulseSummary.averageConnection,
+        tension: pulseSummary.averageTension,
+        streak: pulseSummary.checkInStreakDays,
+      };
+    });
 }
 
 export function buildMetricChartPoints(snapshots: RelationshipMetricSnapshot[], window: MetricsWindow) {

@@ -52,6 +52,8 @@
 	</dict>
 	<key>NSFaceIDUsageDescription</key>
 	<string>How 2 Love Me uses Face ID to unlock your private relationship space.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>How 2 Love Me uses your location to find nearby restaurants for calendar plans.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

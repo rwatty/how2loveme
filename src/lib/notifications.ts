@@ -24,7 +24,14 @@ import {
 
 const DEVICE_INSTALLATION_ID_KEY = '@how2loveme/device-installation-id';
 const LOVE_REMINDER_CHANNEL_ID = 'love-reminders';
-const firebaseMessaging = getMessaging();
+
+function getFirebaseMessagingSafe() {
+  try {
+    return getMessaging();
+  } catch {
+    return null;
+  }
+}
 
 function mapAuthorizationStatus(status: number): NotificationPermissionState {
   switch (status) {
@@ -78,6 +85,12 @@ async function unregisterInstallation(user: User, installationId: string) {
 }
 
 export async function enableNotifications(user: User) {
+  const firebaseMessaging = getFirebaseMessagingSafe();
+
+  if (!firebaseMessaging) {
+    throw new Error('Firebase Messaging is not available on this device build.');
+  }
+
   await ensureNotificationChannel();
   const settings = await notifee.requestPermission();
   const permission = mapAuthorizationStatus(settings.authorizationStatus);
@@ -103,15 +116,18 @@ export async function enableNotifications(user: User) {
 }
 
 export async function disableNotifications(user: User | null) {
+  const firebaseMessaging = getFirebaseMessagingSafe();
   const installationId = await getOrCreateInstallationId();
 
   if (user) {
     await unregisterInstallation(user, installationId);
   }
 
-  try {
-    await deleteToken(firebaseMessaging);
-  } catch {}
+  if (firebaseMessaging) {
+    try {
+      await deleteToken(firebaseMessaging);
+    } catch {}
+  }
 
   await notifee.cancelTriggerNotifications();
   useNotificationStore.getState().setEnabled(false);
@@ -120,9 +136,10 @@ export async function disableNotifications(user: User | null) {
 }
 
 export async function refreshPushRegistration(user: User) {
+  const firebaseMessaging = getFirebaseMessagingSafe();
   const store = useNotificationStore.getState();
 
-  if (!store.enabled) {
+  if (!store.enabled || !firebaseMessaging) {
     return null;
   }
 
@@ -160,6 +177,12 @@ export async function refreshPushRegistration(user: User) {
 }
 
 export function subscribeToTokenRefresh(user: User) {
+  const firebaseMessaging = getFirebaseMessagingSafe();
+
+  if (!firebaseMessaging) {
+    return () => {};
+  }
+
   return onTokenRefresh(firebaseMessaging, async (token: string) => {
     try {
       const installationId = await getOrCreateInstallationId();
@@ -175,6 +198,12 @@ export function subscribeToTokenRefresh(user: User) {
 }
 
 export function subscribeToForegroundMessages() {
+  const firebaseMessaging = getFirebaseMessagingSafe();
+
+  if (!firebaseMessaging) {
+    return () => {};
+  }
+
   return onMessage(firebaseMessaging, async (message: RemoteMessage) => {
     await ensureNotificationChannel();
     await notifee.displayNotification({

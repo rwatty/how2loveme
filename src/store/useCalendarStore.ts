@@ -2,6 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
+export type CalendarFoodInterestFor = 'me' | 'partner' | 'both';
+
 export type CalendarEvent = {
   id: string;
   title: string;
@@ -9,6 +11,13 @@ export type CalendarEvent = {
   startsAt: number;
   endsAt: number | null;
   allDay: boolean;
+  foodQuery: string;
+  foodInterestFor: CalendarFoodInterestFor;
+  restaurantPlaceId: string | null;
+  restaurantName: string;
+  restaurantAddress: string;
+  restaurantLatitude: number | null;
+  restaurantLongitude: number | null;
   status: 'active' | 'cancelled';
   createdAt: number;
   updatedAt: number;

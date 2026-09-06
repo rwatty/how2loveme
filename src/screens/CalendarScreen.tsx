@@ -1,5 +1,14 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { type LayoutChangeEvent, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import {
+  type LayoutChangeEvent,
+  Linking,
+  PermissionsAndroid,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import DateTimePicker, {
   type DateTimePickerEvent,
 } from '@react-native-community/datetimepicker';
@@ -7,12 +16,14 @@ import { useNavigation } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getAuth } from '@react-native-firebase/auth';
+import Geolocation from '@react-native-community/geolocation';
 import {
   Button,
   Card,
   Dialog,
   HelperText,
   Portal,
+  SegmentedButtons,
   Snackbar,
   Surface,
   Switch,
@@ -23,15 +34,20 @@ import JumpToSectionFab, { type JumpSection } from '../components/JumpToSectionF
 import {
   createCalendarEvent,
   deleteCalendarEvent,
+  searchNearbyRestaurants,
+  type NearbyRestaurant,
   updateCalendarEvent,
 } from '../lib/relationshipSync';
 import { MainTabParamList } from '../navigation/MainNavigator';
-import { type CalendarEvent, useCalendarStore } from '../store/useCalendarStore';
+import { type CalendarEvent, type CalendarFoodInterestFor, useCalendarStore } from '../store/useCalendarStore';
 import { useLoveActionStore } from '../store/useLoveActionStore';
 import { useRelationshipStore } from '../store/useRelationshipStore';
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const DEFAULT_RESTAURANT_SEARCH_RADIUS_MILES = 15;
+const MIN_RESTAURANT_SEARCH_RADIUS_MILES = 1;
+const MAX_RESTAURANT_SEARCH_RADIUS_MILES = 30;
 const CALENDAR_JUMP_SECTIONS: JumpSection[] = [
   { key: 'month', label: 'Month View' },
   { key: 'agenda', label: 'Day Agenda' },
@@ -59,6 +75,116 @@ type QuickAction = {
   endDateKey: string;
   allDay: boolean;
 };
+
+function getFoodInterestOptions(isConnected: boolean) {
+  return [
+    { value: 'me', label: 'Me' },
+    { value: 'partner', label: isConnected ? 'Partner' : 'Later' },
+    { value: 'both', label: 'Both' },
+  ];
+}
+
+function getFoodInterestSummary(value: CalendarFoodInterestFor, isConnected: boolean) {
+  switch (value) {
+    case 'partner':
+      return isConnected ? 'Searching with your partner in mind.' : 'Saving this as a future partner idea.';
+    case 'both':
+      return 'Searching for something both of you could enjoy.';
+    default:
+      return 'Searching with your own craving in mind.';
+  }
+}
+
+function parseSearchRadiusMiles(value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed || !/^\d+$/.test(trimmed)) {
+    return null;
+  }
+
+  const numeric = Number(trimmed);
+
+  if (
+    !Number.isFinite(numeric)
+    || numeric < MIN_RESTAURANT_SEARCH_RADIUS_MILES
+    || numeric > MAX_RESTAURANT_SEARCH_RADIUS_MILES
+  ) {
+    return null;
+  }
+
+  return numeric;
+}
+
+function buildAppleMapsUrl(name: string, latitude: number, longitude: number) {
+  return `http://maps.apple.com/?daddr=${latitude},${longitude}&q=${encodeURIComponent(name)}`;
+}
+
+function buildGoogleMapsUrl(placeId: string | null, latitude: number, longitude: number) {
+  const query = new URLSearchParams({
+    api: '1',
+    destination: `${latitude},${longitude}`,
+  });
+
+  if (placeId) {
+    query.set('destination_place_id', placeId);
+  }
+
+  return `https://www.google.com/maps/dir/?${query.toString()}`;
+}
+
+async function ensureLocationPermission() {
+  if (Platform.OS === 'android') {
+    const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+    return granted === PermissionsAndroid.RESULTS.GRANTED;
+  }
+
+  return new Promise<boolean>(resolve => {
+    Geolocation.requestAuthorization(
+      () => resolve(true),
+      () => resolve(false),
+    );
+  });
+}
+
+function getFriendlyLocationError(error: { code?: number; message?: string }) {
+  switch (error.code) {
+    case 1:
+      return 'Location permission is required to search for nearby restaurants.';
+    case 2:
+      return 'Your location is unavailable right now. Try again in a moment.';
+    case 3:
+      return 'Location lookup timed out. Try again where GPS reception is stronger.';
+    default:
+      return error.message ?? 'Unable to read your current location right now.';
+  }
+}
+
+async function getCurrentCoordinates() {
+  const granted = await ensureLocationPermission();
+
+  if (!granted) {
+    throw new Error('Location permission is required to search for nearby restaurants.');
+  }
+
+  return new Promise<{ latitude: number; longitude: number }>((resolve, reject) => {
+    Geolocation.getCurrentPosition(
+      position => {
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+      },
+      error => {
+        reject(new Error(getFriendlyLocationError(error)));
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 15000,
+        maximumAge: 300000,
+      },
+    );
+  });
+}
 
 function pad(value: number) {
   return String(value).padStart(2, '0');
@@ -294,10 +420,10 @@ function getEventSelectedDayStatus(event: CalendarEvent, dateKey: string) {
 
 function getAgendaLabel(count: number) {
   if (count === 1) {
-    return '1 shared plan';
+    return '1 plan';
   }
 
-  return `${count} shared plans`;
+  return `${count} plans`;
 }
 
 function getDayBadgeLabel(count: number, spanningCount: number) {
@@ -329,7 +455,7 @@ function getMonthSummaryLabel(count: number) {
     return 'Start shaping this month together';
   }
 
-  return count === 1 ? '1 shared plan this month' : `${count} shared plans this month`;
+  return count === 1 ? '1 plan this month' : `${count} plans this month`;
 }
 
 function getMonthChipLabel(event: CalendarEvent) {
@@ -345,7 +471,7 @@ function getMonthChipLabel(event: CalendarEvent) {
 function getDayAccessibilityLabel(day: CalendarDayCell, eventMeta?: DayEventMeta, selected?: boolean, dueCount = 0) {
   const dateLabel = formatSelectedDate(day.dateKey);
   const count = eventMeta?.count ?? 0;
-  const planLabel = count === 0 ? 'No shared plans' : getAgendaLabel(count);
+  const planLabel = count === 0 ? 'No plans yet' : getAgendaLabel(count);
   const dueLabel = dueCount === 0 ? 'No Love Actions due' : `${dueCount} Love Action${dueCount === 1 ? '' : 's'} due`;
   return `${dateLabel}. ${planLabel}. ${dueLabel}.${selected ? ' Selected.' : ''}`;
 }
@@ -465,6 +591,13 @@ function createPreviewEvents(userId?: string, userEmail?: string): CalendarEvent
       startsAt: dateWithTime(2, 19, 0),
       endsAt: dateWithTime(2, 21, 0),
       allDay: false,
+      foodQuery: '',
+      foodInterestFor: 'both',
+      restaurantPlaceId: null,
+      restaurantName: '',
+      restaurantAddress: '',
+      restaurantLatitude: null,
+      restaurantLongitude: null,
       status: 'active',
       createdAt,
       updatedAt: createdAt,
@@ -478,6 +611,13 @@ function createPreviewEvents(userId?: string, userEmail?: string): CalendarEvent
       startsAt: dateWithTime(4, 18, 30),
       endsAt: dateWithTime(5, 10, 0),
       allDay: false,
+      foodQuery: '',
+      foodInterestFor: 'both',
+      restaurantPlaceId: null,
+      restaurantName: '',
+      restaurantAddress: '',
+      restaurantLatitude: null,
+      restaurantLongitude: null,
       status: 'active',
       createdAt,
       updatedAt: createdAt,
@@ -491,6 +631,13 @@ function createPreviewEvents(userId?: string, userEmail?: string): CalendarEvent
       startsAt: allDayDate(7),
       endsAt: allDayDate(9),
       allDay: true,
+      foodQuery: '',
+      foodInterestFor: 'both',
+      restaurantPlaceId: null,
+      restaurantName: '',
+      restaurantAddress: '',
+      restaurantLatitude: null,
+      restaurantLongitude: null,
       status: 'active',
       createdAt,
       updatedAt: createdAt,
@@ -504,6 +651,13 @@ function createPreviewEvents(userId?: string, userEmail?: string): CalendarEvent
       startsAt: dateWithTime(9, 18, 0),
       endsAt: dateWithTime(9, 19, 0),
       allDay: false,
+      foodQuery: '',
+      foodInterestFor: 'both',
+      restaurantPlaceId: null,
+      restaurantName: '',
+      restaurantAddress: '',
+      restaurantLatitude: null,
+      restaurantLongitude: null,
       status: 'active',
       createdAt,
       updatedAt: createdAt,
@@ -534,10 +688,17 @@ export default function CalendarScreen() {
   const [endDateKey, setEndDateKey] = useState(selectedDateKey);
   const [title, setTitle] = useState('');
   const [note, setNote] = useState('');
+  const [foodQuery, setFoodQuery] = useState('');
+  const [searchRadiusMiles, setSearchRadiusMiles] = useState(String(DEFAULT_RESTAURANT_SEARCH_RADIUS_MILES));
+  const [foodInterestFor, setFoodInterestFor] = useState<CalendarFoodInterestFor>('me');
+  const [restaurantResults, setRestaurantResults] = useState<NearbyRestaurant[]>([]);
+  const [selectedRestaurant, setSelectedRestaurant] = useState<NearbyRestaurant | null>(null);
   const [allDay, setAllDay] = useState(true);
   const [startTime, setStartTime] = useState('18:30');
   const [endTime, setEndTime] = useState('20:00');
   const [saving, setSaving] = useState(false);
+  const [searchingRestaurants, setSearchingRestaurants] = useState(false);
+  const [restaurantSearchFeedback, setRestaurantSearchFeedback] = useState('');
   const [deletingEventId, setDeletingEventId] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState('');
   const [previewMode, setPreviewMode] = useState(false);
@@ -545,6 +706,7 @@ export default function CalendarScreen() {
   const [activePicker, setActivePicker] = useState<PickerTarget>(null);
   const [sectionOffsets, setSectionOffsets] = useState<Record<string, number>>({});
   const scrollViewRef = useRef<any>(null);
+  const isConnected = !!profile?.coupleId;
 
   const activeEvents = previewMode ? previewEvents : events;
   const monthGrid = useMemo(() => getMonthGrid(visibleMonthKey), [visibleMonthKey]);
@@ -630,6 +792,7 @@ export default function CalendarScreen() {
     [dueActions, visibleMonthKey],
   );
   const quickActions = useMemo(() => buildQuickActions(), []);
+  const foodInterestOptions = useMemo(() => getFoodInterestOptions(isConnected), [isConnected]);
   const summaryRow = (
     <View style={styles.summaryRow}>
       <View style={styles.summaryPill}>
@@ -659,6 +822,10 @@ export default function CalendarScreen() {
   const endTimeError = !allDay && endTime.length > 0 && !TIME_REGEX.test(endTime);
   const dateRangeError = parseDateKey(endDateKey).getTime() < parseDateKey(startDateKey).getTime();
   const missingEndTime = !allDay && endDateKey !== startDateKey && endTime.trim().length === 0;
+  const parsedSearchRadiusMiles = parseSearchRadiusMiles(searchRadiusMiles);
+  const searchRadiusError = searchRadiusMiles.trim().length > 0 && parsedSearchRadiusMiles == null;
+  const hasFoodQuery = foodQuery.trim().length > 0;
+  const restaurantSearchDisabled = searchingRestaurants || saving || !hasFoodQuery || parsedSearchRadiusMiles == null;
   const formError = titleError || startTimeError || endTimeError || dateRangeError || missingEndTime;
 
   const launchPreviewMode = () => {
@@ -680,6 +847,12 @@ export default function CalendarScreen() {
     setEndDateKey(options?.endDateKey ?? dateKey);
     setTitle('');
     setNote('');
+    setFoodQuery('');
+    setSearchRadiusMiles(String(DEFAULT_RESTAURANT_SEARCH_RADIUS_MILES));
+    setFoodInterestFor('me');
+    setRestaurantResults([]);
+    setRestaurantSearchFeedback('');
+    setSelectedRestaurant(null);
     setAllDay(options?.allDay ?? true);
     setStartTime(options?.startTime ?? '18:30');
     setEndTime(options?.endTime ?? '20:00');
@@ -693,6 +866,23 @@ export default function CalendarScreen() {
     setEndDateKey(getEventEndDateKey(event));
     setTitle(event.title);
     setNote(event.note);
+    setFoodQuery(event.foodQuery);
+    setSearchRadiusMiles(String(DEFAULT_RESTAURANT_SEARCH_RADIUS_MILES));
+    setFoodInterestFor(event.foodInterestFor);
+    setRestaurantResults([]);
+    setRestaurantSearchFeedback('');
+    setSelectedRestaurant(
+      event.restaurantPlaceId && event.restaurantLatitude != null && event.restaurantLongitude != null
+        ? {
+            placeId: event.restaurantPlaceId,
+            name: event.restaurantName,
+            address: event.restaurantAddress,
+            latitude: event.restaurantLatitude,
+            longitude: event.restaurantLongitude,
+            googleMapsUri: null,
+          }
+        : null,
+    );
     setAllDay(event.allDay);
     setStartTime(event.allDay ? '18:30' : formatTimeValue(new Date(event.startsAt)));
     setEndTime(event.endsAt && !event.allDay ? formatTimeValue(new Date(event.endsAt)) : event.allDay ? '20:00' : '');
@@ -714,6 +904,76 @@ export default function CalendarScreen() {
       startTime: action.allDay ? '18:30' : '18:30',
       endTime: action.allDay ? '20:00' : action.endDateKey === action.startDateKey ? '20:00' : '10:00',
     });
+  };
+
+  const handleSearchRestaurants = async () => {
+    if (!user) {
+      setSnackbar('Sign in again to search nearby restaurants.');
+      return;
+    }
+
+    const trimmedQuery = foodQuery.trim();
+
+    if (!trimmedQuery) {
+      setSnackbar('Enter a food type first, like sushi, tacos, or vegan brunch.');
+      return;
+    }
+
+    const radiusMiles = parseSearchRadiusMiles(searchRadiusMiles);
+
+    if (radiusMiles == null) {
+      setSnackbar(`Enter a search radius between ${MIN_RESTAURANT_SEARCH_RADIUS_MILES} and ${MAX_RESTAURANT_SEARCH_RADIUS_MILES} miles.`);
+      return;
+    }
+
+    setSearchingRestaurants(true);
+    setRestaurantResults([]);
+    setRestaurantSearchFeedback(`Searching within ${radiusMiles} mile${radiusMiles === 1 ? '' : 's'} of your current location...`);
+
+    try {
+      const coordinates = await getCurrentCoordinates();
+      const result = await searchNearbyRestaurants({
+        query: trimmedQuery,
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
+        radiusMiles,
+      });
+
+      setRestaurantResults(result.places);
+
+      if (result.places.length === 0) {
+        const message = `No ${trimmedQuery} spots showed up within ${radiusMiles} miles.`;
+        setRestaurantSearchFeedback(message);
+        setSnackbar(message);
+      } else {
+        setRestaurantSearchFeedback(
+          `Found ${result.places.length} ${trimmedQuery} match${result.places.length === 1 ? '' : 'es'} nearby. Pick one to pin to this plan.`,
+        );
+      }
+    } catch (error: any) {
+      const message = error.message ?? 'Unable to search nearby restaurants right now.';
+      setRestaurantResults([]);
+      setRestaurantSearchFeedback(message);
+      setSnackbar(message);
+    } finally {
+      setSearchingRestaurants(false);
+    }
+  };
+
+  const handleOpenDirections = async (event: CalendarEvent, provider: 'apple' | 'google') => {
+    if (event.restaurantLatitude == null || event.restaurantLongitude == null || !event.restaurantName) {
+      return;
+    }
+
+    const url = provider === 'apple'
+      ? buildAppleMapsUrl(event.restaurantName, event.restaurantLatitude, event.restaurantLongitude)
+      : buildGoogleMapsUrl(event.restaurantPlaceId, event.restaurantLatitude, event.restaurantLongitude);
+
+    try {
+      await Linking.openURL(url);
+    } catch {
+      setSnackbar('Unable to open map directions right now.');
+    }
   };
 
   const handlePickerChange = (target: Exclude<PickerTarget, null>) => (event: DateTimePickerEvent, value?: Date) => {
@@ -780,6 +1040,13 @@ export default function CalendarScreen() {
         startsAt,
         endsAt,
         allDay,
+        foodQuery,
+        foodInterestFor,
+        restaurantPlaceId: selectedRestaurant?.placeId ?? null,
+        restaurantName: selectedRestaurant?.name ?? '',
+        restaurantAddress: selectedRestaurant?.address ?? '',
+        restaurantLatitude: selectedRestaurant?.latitude ?? null,
+        restaurantLongitude: selectedRestaurant?.longitude ?? null,
       };
 
       if (previewMode) {
@@ -791,6 +1058,13 @@ export default function CalendarScreen() {
           startsAt: payload.startsAt.getTime(),
           endsAt: payload.endsAt ? payload.endsAt.getTime() : null,
           allDay: payload.allDay,
+          foodQuery: payload.foodQuery.trim(),
+          foodInterestFor: payload.foodInterestFor,
+          restaurantPlaceId: payload.restaurantPlaceId,
+          restaurantName: payload.restaurantName.trim(),
+          restaurantAddress: payload.restaurantAddress.trim(),
+          restaurantLatitude: payload.restaurantLatitude,
+          restaurantLongitude: payload.restaurantLongitude,
           status: 'active',
           createdAt,
           updatedAt: Date.now(),
@@ -814,17 +1088,12 @@ export default function CalendarScreen() {
           return;
         }
 
-        if (!profile?.coupleId) {
-          setSnackbar('Connect with your partner in Us before adding shared plans.');
-          return;
-        }
-
         if (editingEvent) {
           await updateCalendarEvent(user, editingEvent.id, payload);
-          setSnackbar('Shared plan updated.');
+          setSnackbar(isConnected ? 'Shared plan updated.' : 'Personal plan updated.');
         } else {
           await createCalendarEvent(user, payload);
-          setSnackbar('Shared plan added to your calendar.');
+          setSnackbar(isConnected ? 'Shared plan added to your calendar.' : 'Personal plan added to your calendar.');
         }
       }
 
@@ -833,7 +1102,7 @@ export default function CalendarScreen() {
       setActivePicker(null);
       setDialogVisible(false);
     } catch (error: any) {
-      setSnackbar(error.message ?? 'Unable to save that shared plan right now.');
+      setSnackbar(error.message ?? 'Unable to save that plan right now.');
     } finally {
       setSaving(false);
     }
@@ -853,7 +1122,7 @@ export default function CalendarScreen() {
         setSnackbar('Preview plan removed.');
       } else {
         await deleteCalendarEvent(user!, event.id);
-        setSnackbar('Shared plan removed.');
+        setSnackbar(isConnected ? 'Shared plan removed.' : 'Personal plan removed.');
       }
 
       if (editingEvent?.id === event.id) {
@@ -861,7 +1130,7 @@ export default function CalendarScreen() {
         setActivePicker(null);
       }
     } catch (error: any) {
-      setSnackbar(error.message ?? 'Unable to remove that shared plan right now.');
+      setSnackbar(error.message ?? 'Unable to remove that plan right now.');
     } finally {
       setDeletingEventId(null);
     }
@@ -943,58 +1212,19 @@ export default function CalendarScreen() {
         <Text variant="headlineMedium" style={styles.header}>
           Calendar
         </Text>
-        <Text style={styles.subheader}>Warming up your shared calendar and syncing upcoming plans.</Text>
+        <Text style={styles.subheader}>Warming up your calendar and syncing upcoming plans.</Text>
         {summaryRow}
-      </ScrollView>
-    );
-  }
-
-  if (!profile?.coupleId && !previewMode) {
-    return (
-      <ScrollView style={styles.screen} contentContainerStyle={scrollContentStyle}>
-        <Text variant="headlineMedium" style={styles.header}>
-          Calendar
-        </Text>
-        <Text style={styles.subheader}>
-          Build rituals together with a visual month view once you connect with your partner.
-        </Text>
-        {summaryRow}
-        <Surface style={styles.emptyHero} elevation={2}>
-          <Text variant="titleLarge" style={styles.emptyTitle}>
-            Your shared month is waiting
-          </Text>
-          <Text style={styles.emptyBody}>
-            Connect in Us first, then you can drop date nights, check-ins, weekends away, and little future plans straight onto the calendar.
-          </Text>
-          <View style={styles.emptyActionsRow}>
-            <Button
-              mode="contained"
-              onPress={() => navigation.navigate('Us')}
-              style={styles.primaryButton}
-              accessibilityLabel="Open the Us tab to connect with your partner"
-            >
-              Connect in Us
-            </Button>
-            {__DEV__ ? (
-              <Button
-                mode="outlined"
-                onPress={launchPreviewMode}
-                style={styles.secondaryButton}
-                accessibilityLabel="Preview the calendar experience with local sample plans"
-              >
-                Preview Calendar UX
-              </Button>
-            ) : null}
-          </View>
-        </Surface>
-        {!!relationshipError && <Text style={styles.errorText}>{relationshipError}</Text>}
       </ScrollView>
     );
   }
 
   return (
     <>
-      <ScrollView ref={scrollViewRef} style={styles.screen} contentContainerStyle={scrollContentStyle}>
+      <ScrollView
+        ref={scrollViewRef}
+        style={styles.screen}
+        contentContainerStyle={scrollContentStyle}
+      >
         {summaryRow}
         {!!relationshipError && !previewMode && <Text style={styles.errorText}>{relationshipError}</Text>}
         {previewMode ? (
@@ -1061,7 +1291,7 @@ export default function CalendarScreen() {
                   onPress={() => openCreateDialog()}
                   style={styles.addPlanPill}
                   labelStyle={styles.toolbarButtonLabel}
-                  accessibilityLabel="Add a shared calendar plan"
+                  accessibilityLabel={isConnected ? 'Add a shared calendar plan' : 'Add a personal calendar plan'}
                 >
                   Add
                 </Button>
@@ -1080,7 +1310,7 @@ export default function CalendarScreen() {
                   onPress={() => handleQuickAction(action)}
                   style={styles.quickActionButton}
                   labelStyle={styles.quickActionLabel}
-                  accessibilityLabel={`Quick add a shared plan for ${action.label.toLowerCase()}`}
+                  accessibilityLabel={`Quick add a ${isConnected ? 'shared' : 'personal'} plan for ${action.label.toLowerCase()}`}
                 >
                   {action.label}
                 </Button>
@@ -1231,7 +1461,7 @@ export default function CalendarScreen() {
                     Nothing planned yet
                   </Text>
                   <Text style={styles.emptyAgendaBody}>
-                    Tap Add to anchor a date night, overnight reset, check-in, or shared ritual on this day.
+                    Tap Add to anchor a date night, check-in, solo reset, or shared ritual on this day.
                   </Text>
                 </Surface>
               ) : (
@@ -1248,7 +1478,7 @@ export default function CalendarScreen() {
                             style={styles.eventPressable}
                             accessibilityRole="button"
                             accessibilityLabel={`${event.title}. ${formatEventTime(event)}.${selectedDayStatus ? ` ${selectedDayStatus}.` : ''}`}
-                            accessibilityHint="Open this shared plan to edit details."
+                            accessibilityHint="Open this plan to edit details."
                           >
                             <View style={styles.eventHeaderRow}>
                               <View style={styles.eventTextWrap}>
@@ -1278,6 +1508,29 @@ export default function CalendarScreen() {
                                 <Text style={styles.eventNote}>{event.note}</Text>
                               </Surface>
                             )}
+                            {event.restaurantName && event.restaurantLatitude != null && event.restaurantLongitude != null ? (
+                              <Surface style={styles.eventPlaceCard} elevation={0}>
+                                <Text style={styles.eventPlaceEyebrow}>
+                                  {event.foodQuery
+                                    ? `${event.foodQuery} · ${event.foodInterestFor === 'partner' ? (isConnected ? 'Partner' : 'Later') : event.foodInterestFor === 'both' ? 'Both' : 'Me'}`
+                                    : 'Pinned restaurant'}
+                                </Text>
+                                <Text variant="titleSmall" style={styles.eventPlaceTitle}>
+                                  {event.restaurantName}
+                                </Text>
+                                <Text style={styles.eventPlaceAddress}>{event.restaurantAddress}</Text>
+                                <View style={styles.eventMapActionsRow}>
+                                  {Platform.OS === 'ios' ? (
+                                    <Button mode="outlined" compact onPress={() => void handleOpenDirections(event, 'apple')}>
+                                      Apple Maps
+                                    </Button>
+                                  ) : null}
+                                  <Button mode="contained-tonal" compact onPress={() => void handleOpenDirections(event, 'google')}>
+                                    Google Maps
+                                  </Button>
+                                </View>
+                              </Surface>
+                            ) : null}
                             <Text style={styles.eventHint}>Tap to edit details</Text>
                           </Pressable>
                           <View style={styles.eventActionRow}>
@@ -1325,7 +1578,7 @@ export default function CalendarScreen() {
                     No Love Actions due here
                   </Text>
                   <Text style={styles.emptyAgendaBody}>
-                    When you schedule shared Love Actions with a due date, they will appear on the matching day here.
+                    Love Actions with a due date will appear on the matching day here.
                   </Text>
                 </Surface>
               ) : (
@@ -1368,7 +1621,7 @@ export default function CalendarScreen() {
             </Card.Content>
           </Card>
         </View>
-        {syncing && <Text style={styles.syncText}>Syncing your shared calendar...</Text>}
+        {syncing && <Text style={styles.syncText}>Syncing your calendar...</Text>}
       </ScrollView>
       <JumpToSectionFab sections={visibleJumpSections} onSelectSection={handleJumpToSection} />
       <Portal>
@@ -1382,7 +1635,7 @@ export default function CalendarScreen() {
           }}
           style={styles.dialog}
         >
-          <Dialog.Title>{editingEvent ? 'Edit shared plan' : 'Add shared plan'}</Dialog.Title>
+          <Dialog.Title>{editingEvent ? (isConnected ? 'Edit shared plan' : 'Edit personal plan') : isConnected ? 'Add shared plan' : 'Add personal plan'}</Dialog.Title>
           <Dialog.ScrollArea style={styles.dialogScrollArea}>
             <ScrollView
               keyboardShouldPersistTaps="handled"
@@ -1405,7 +1658,7 @@ export default function CalendarScreen() {
                   accessibilityLabel="Plan title"
                 />
                 <HelperText type="error" visible={titleError}>
-                  Add a title for this shared plan.
+                  Add a title for this plan.
                 </HelperText>
                 <TextInput
                   mode="outlined"
@@ -1418,6 +1671,112 @@ export default function CalendarScreen() {
                   accessibilityLabel="Plan notes"
                 />
               </View>
+              <Surface style={styles.dialogSectionCard} elevation={0}>
+                <Text variant="titleSmall" style={styles.sectionTitle}>
+                  Food idea
+                </Text>
+                <TextInput
+                  mode="outlined"
+                  label="Food or cuisine"
+                  value={foodQuery}
+                  onChangeText={setFoodQuery}
+                  style={styles.input}
+                  placeholder="Sushi, Ethiopian, tacos, vegan brunch"
+                  accessibilityLabel="Food or cuisine to search for"
+                />
+                <TextInput
+                  mode="outlined"
+                  label="Search radius (miles)"
+                  value={searchRadiusMiles}
+                  onChangeText={setSearchRadiusMiles}
+                  style={styles.input}
+                  keyboardType="number-pad"
+                  accessibilityLabel="Restaurant search radius in miles"
+                />
+                <Surface style={styles.segmentedWrap} elevation={0}>
+                  <SegmentedButtons
+                    value={foodInterestFor}
+                    onValueChange={value => setFoodInterestFor(value as CalendarFoodInterestFor)}
+                    buttons={foodInterestOptions}
+                    theme={{ roundness: 999 }}
+                  />
+                </Surface>
+                <HelperText style={styles.inlineHelperText} type="info" visible>
+                  {parsedSearchRadiusMiles == null
+                    ? `${getFoodInterestSummary(foodInterestFor, isConnected)} Choose a search radius between ${MIN_RESTAURANT_SEARCH_RADIUS_MILES} and ${MAX_RESTAURANT_SEARCH_RADIUS_MILES} miles.`
+                    : `${getFoodInterestSummary(foodInterestFor, isConnected)} Search within ${parsedSearchRadiusMiles} mile${parsedSearchRadiusMiles === 1 ? '' : 's'} of your current location.`}
+                </HelperText>
+                <HelperText type="error" visible={searchRadiusError}>
+                  Enter a whole number between {MIN_RESTAURANT_SEARCH_RADIUS_MILES} and {MAX_RESTAURANT_SEARCH_RADIUS_MILES}.
+                </HelperText>
+                <View style={styles.restaurantActionRow}>
+                  <Button
+                    mode="contained"
+                    onPress={() => void handleSearchRestaurants()}
+                    loading={searchingRestaurants}
+                    disabled={restaurantSearchDisabled}
+                    buttonColor="#B25B63"
+                    textColor="#FFF8F3"
+                  >
+                    Search nearby restaurants
+                  </Button>
+                  {selectedRestaurant ? (
+                    <Button
+                      mode="text"
+                      onPress={() => setSelectedRestaurant(null)}
+                      disabled={searchingRestaurants || saving}
+                    >
+                      Clear pin
+                    </Button>
+                  ) : null}
+                </View>
+                {restaurantSearchFeedback ? (
+                  <Surface style={styles.restaurantSearchFeedbackCard} elevation={0}>
+                    <Text style={styles.restaurantResultEyebrow}>
+                      {searchingRestaurants ? 'Searching nearby' : restaurantResults.length > 0 ? 'Nearby matches' : 'Restaurant search'}
+                    </Text>
+                    <Text style={styles.restaurantSearchFeedbackText}>{restaurantSearchFeedback}</Text>
+                  </Surface>
+                ) : null}
+                {selectedRestaurant ? (
+                  <Surface style={styles.restaurantResultCardSelected} elevation={0}>
+                    <Text style={styles.restaurantResultEyebrow}>Pinned restaurant</Text>
+                    <Text variant="titleSmall" style={styles.restaurantResultTitle}>
+                      {selectedRestaurant.name}
+                    </Text>
+                    <Text style={styles.restaurantResultAddress}>{selectedRestaurant.address}</Text>
+                  </Surface>
+                ) : null}
+                {restaurantResults.length > 0 ? (
+                  <View style={styles.restaurantResultsList}>
+                    {restaurantResults.map(result => {
+                      const selected = selectedRestaurant?.placeId === result.placeId;
+
+                      return (
+                        <Surface
+                          key={result.placeId}
+                          style={[styles.restaurantResultCard, selected ? styles.restaurantResultCardSelected : null]}
+                          elevation={0}
+                        >
+                          <Text variant="titleSmall" style={styles.restaurantResultTitle}>
+                            {result.name}
+                          </Text>
+                          <Text style={styles.restaurantResultAddress}>{result.address}</Text>
+                          <View style={styles.restaurantActionRow}>
+                            <Button
+                              mode={selected ? 'contained' : 'outlined'}
+                              compact
+                              onPress={() => setSelectedRestaurant(result)}
+                            >
+                              {selected ? 'Pinned' : 'Pin to event'}
+                            </Button>
+                          </View>
+                        </Surface>
+                      );
+                    })}
+                  </View>
+                ) : null}
+              </Surface>
               <Surface style={styles.dialogSectionCard} elevation={0}>
                 <View style={styles.switchRow}>
                   <View style={styles.switchCopy}>
@@ -1964,6 +2323,35 @@ const styles = StyleSheet.create({
     color: '#3F2831',
     lineHeight: 21,
   },
+  eventPlaceCard: {
+    marginTop: 2,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#FFF7F2',
+    borderWidth: 1,
+    borderColor: '#F3C8BA',
+    gap: 6,
+  },
+  eventPlaceEyebrow: {
+    color: '#8F4654',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  eventPlaceTitle: {
+    color: '#3F2831',
+    fontWeight: '700',
+  },
+  eventPlaceAddress: {
+    color: '#7C5964',
+    lineHeight: 20,
+  },
+  eventMapActionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
   eventHint: {
     color: '#7C5964',
     fontSize: 12,
@@ -2019,6 +2407,62 @@ const styles = StyleSheet.create({
   },
   input: {
     backgroundColor: '#FFF3EA',
+  },
+  segmentedWrap: {
+    borderRadius: 18,
+    backgroundColor: '#FFF3EA',
+    borderWidth: 1,
+    borderColor: '#F3C8BA',
+    padding: 4,
+  },
+  restaurantActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 8,
+  },
+  restaurantResultsList: {
+    gap: 8,
+  },
+  restaurantSearchFeedbackCard: {
+    borderRadius: 16,
+    backgroundColor: '#FFF3EA',
+    borderWidth: 1,
+    borderColor: '#F3C8BA',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  restaurantSearchFeedbackText: {
+    color: '#7C5964',
+    lineHeight: 20,
+  },
+  restaurantResultCard: {
+    borderRadius: 16,
+    backgroundColor: '#FFF3EA',
+    borderWidth: 1,
+    borderColor: '#F3C8BA',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  restaurantResultCardSelected: {
+    borderColor: '#B25B63',
+    backgroundColor: '#FFF8F4',
+  },
+  restaurantResultEyebrow: {
+    color: '#8F4654',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  restaurantResultTitle: {
+    color: '#3F2831',
+    fontWeight: '700',
+  },
+  restaurantResultAddress: {
+    color: '#7C5964',
+    lineHeight: 20,
   },
   switchRow: {
     flexDirection: 'row',

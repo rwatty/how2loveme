@@ -32,6 +32,7 @@ service cloud.firestore {
         'coupleId',
         'displayName',
         'notificationPrivacy',
+        'quickTipsEnabled',
         'adultConfirmedAt',
         'privacyAcceptedAt',
         'safetyAcceptedAt',
@@ -52,6 +53,10 @@ service cloud.firestore {
           || request.resource.data.notificationPrivacy == 'detailed'
           || request.resource.data.notificationPrivacy == 'discreet'
           || request.resource.data.notificationPrivacy == 'off'
+        )
+        && (
+          request.resource.data.quickTipsEnabled == null
+          || request.resource.data.quickTipsEnabled is bool
         )
         && (
           request.resource.data.adultConfirmedAt == null
@@ -163,12 +168,182 @@ service cloud.firestore {
         'startsAt',
         'endsAt',
         'allDay',
+        'foodQuery',
+        'foodInterestFor',
+        'restaurantPlaceId',
+        'restaurantName',
+        'restaurantAddress',
+        'restaurantLatitude',
+        'restaurantLongitude',
         'status',
         'createdByUserId',
         'createdByEmail',
         'createdAt',
         'updatedAt'
       ]);
+    }
+
+    function calendarEventFieldsValid() {
+      return calendarEventKeysValid()
+        && request.resource.data.title is string
+        && request.resource.data.note is string
+        && request.resource.data.startsAt is timestamp
+        && (
+          request.resource.data.endsAt == null
+          || request.resource.data.endsAt is timestamp
+        )
+        && request.resource.data.allDay is bool
+        && request.resource.data.foodQuery is string
+        && request.resource.data.foodInterestFor is string
+        && request.resource.data.foodInterestFor in ['me', 'partner', 'both']
+        && (
+          request.resource.data.restaurantPlaceId == null
+          || request.resource.data.restaurantPlaceId is string
+        )
+        && request.resource.data.restaurantName is string
+        && request.resource.data.restaurantAddress is string
+        && (
+          request.resource.data.restaurantLatitude == null
+          || request.resource.data.restaurantLatitude is int
+          || request.resource.data.restaurantLatitude is float
+        )
+        && (
+          request.resource.data.restaurantLongitude == null
+          || request.resource.data.restaurantLongitude is int
+          || request.resource.data.restaurantLongitude is float
+        )
+        && (
+          (request.resource.data.restaurantLatitude == null && request.resource.data.restaurantLongitude == null)
+          || (request.resource.data.restaurantLatitude != null && request.resource.data.restaurantLongitude != null)
+        )
+        && request.resource.data.status in ['active', 'cancelled'];
+    }
+
+    function loveActionKeysValid() {
+      return request.resource.data.keys().hasOnly([
+        'title',
+        'area',
+        'preferenceId',
+        'notes',
+        'importance',
+        'frequency',
+        'timing',
+        'customTiming',
+        'visibility',
+        'status',
+        'nextDueAt',
+        'lastCompletedAt',
+        'respondedAt',
+        'respondedByUserId',
+        'respondedByEmail',
+        'confirmationReaction',
+        'confirmationNote',
+        'appreciationReaction',
+        'appreciationNote',
+        'proposedByUserId',
+        'proposedByEmail',
+        'responsibleUserId',
+        'responsibleUserEmail',
+        'recipientUserId',
+        'recipientUserEmail',
+        'createdAt',
+        'updatedAt'
+      ]);
+    }
+
+    function loveActionFieldsValid() {
+      return loveActionKeysValid()
+        && request.resource.data.title is string
+        && request.resource.data.area is string
+        && request.resource.data.notes is string
+        && request.resource.data.importance is string
+        && request.resource.data.frequency is string
+        && request.resource.data.timing is string
+        && request.resource.data.visibility is string
+        && request.resource.data.status is string
+        && (
+          request.resource.data.preferenceId == null
+          || request.resource.data.preferenceId is string
+        )
+        && (
+          request.resource.data.customTiming == null
+          || request.resource.data.customTiming is string
+        )
+        && (
+          request.resource.data.nextDueAt == null
+          || request.resource.data.nextDueAt is timestamp
+        )
+        && (
+          request.resource.data.lastCompletedAt == null
+          || request.resource.data.lastCompletedAt is timestamp
+        )
+        && (
+          request.resource.data.respondedAt == null
+          || request.resource.data.respondedAt is timestamp
+        )
+        && (
+          request.resource.data.respondedByUserId == null
+          || request.resource.data.respondedByUserId is string
+        )
+        && (
+          request.resource.data.respondedByEmail == null
+          || request.resource.data.respondedByEmail is string
+        )
+        && (
+          request.resource.data.confirmationReaction == null
+          || request.resource.data.confirmationReaction is string
+        )
+        && request.resource.data.confirmationNote is string
+        && (
+          request.resource.data.appreciationReaction == null
+          || request.resource.data.appreciationReaction is string
+        )
+        && request.resource.data.appreciationNote is string
+        && request.resource.data.proposedByUserId == request.auth.uid
+        && request.resource.data.proposedByEmail == authEmail()
+        && request.resource.data.responsibleUserId == request.auth.uid
+        && request.resource.data.responsibleUserEmail == authEmail()
+        && request.resource.data.recipientUserId == request.auth.uid
+        && request.resource.data.recipientUserEmail == authEmail()
+        && (
+          request.resource.data.respondedByUserId == null
+          || request.resource.data.respondedByUserId == request.auth.uid
+        )
+        && (
+          request.resource.data.respondedByEmail == null
+          || request.resource.data.respondedByEmail == authEmail()
+        )
+        && request.resource.data.area in [
+          'emotional',
+          'physicalIntimate',
+          'communication',
+          'financial',
+          'spiritual',
+          'mental',
+          'social',
+          'partnership'
+        ]
+        && request.resource.data.importance in ['low', 'medium', 'high', 'essential']
+        && request.resource.data.frequency in [
+          'daily',
+          'severalTimesWeekly',
+          'weekly',
+          'monthly',
+          'occasionally',
+          'surpriseMe'
+        ]
+        && request.resource.data.timing in ['morning', 'evening', 'weekend', 'anytime', 'custom']
+        && request.resource.data.visibility in ['private', 'shared', 'surprise']
+        && request.resource.data.status in [
+          'proposed',
+          'scheduled',
+          'due',
+          'performed',
+          'confirmed',
+          'appreciated',
+          'needsAttention',
+          'cancelled'
+        ];
     }
 
     function insightKeysValid() {
@@ -223,6 +398,46 @@ service cloud.firestore {
         allow create, update, delete: if false;
       }
 
+      match /mirrorMessages/{messageId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && mirrorMessageKeysValid()
+          && mirrorMessageFieldsValid()
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.senderEmail == authEmail();
+        allow update: if false;
+        allow delete: if isOwner(userId)
+          && resource.data.senderId == request.auth.uid;
+      }
+
+      match /calendarEvents/{eventId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && calendarEventFieldsValid()
+          && request.resource.data.createdByUserId == request.auth.uid
+          && request.resource.data.createdByEmail == authEmail()
+          && request.resource.data.status == 'active';
+        allow update: if isOwner(userId)
+          && calendarEventFieldsValid()
+          && request.resource.data.createdByUserId == resource.data.createdByUserId
+          && request.resource.data.createdByEmail == resource.data.createdByEmail
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.status == resource.data.status;
+        allow delete: if isOwner(userId);
+      }
+
+      match /loveActions/{actionId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && loveActionFieldsValid();
+        allow update: if isOwner(userId)
+          && loveActionFieldsValid()
+          && request.resource.data.proposedByUserId == resource.data.proposedByUserId
+          && request.resource.data.proposedByEmail == resource.data.proposedByEmail
+          && request.resource.data.createdAt == resource.data.createdAt;
+        allow delete: if isOwner(userId);
+      }
+
       match /insights/{insightId} {
         allow read: if isOwner(userId);
         allow create: if isOwner(userId)
@@ -270,12 +485,12 @@ service cloud.firestore {
       match /calendarEvents/{eventId} {
         allow read: if isCoupleMember(coupleId);
         allow create: if isCoupleMember(coupleId)
-          && calendarEventKeysValid()
+          && calendarEventFieldsValid()
           && request.resource.data.createdByUserId == request.auth.uid
           && request.resource.data.createdByEmail == authEmail()
           && request.resource.data.status == 'active';
         allow update: if isCoupleMember(coupleId)
-          && calendarEventKeysValid()
+          && calendarEventFieldsValid()
           && request.resource.data.createdByUserId == resource.data.createdByUserId
           && request.resource.data.createdByEmail == resource.data.createdByEmail
           && request.resource.data.createdAt == resource.data.createdAt

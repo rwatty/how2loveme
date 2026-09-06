@@ -115,9 +115,9 @@ type ChoiceOption = {
 function getActionStatusLabel(action: LoveAction) {
   switch (action.status) {
     case 'proposed':
-      return 'Waiting for partner response';
+      return 'Waiting for response';
     case 'scheduled':
-      return 'Accepted and scheduled';
+      return 'Scheduled';
     case 'due':
       return 'Due now';
     case 'performed':
@@ -136,6 +136,10 @@ function getActionStatusLabel(action: LoveAction) {
 }
 
 function getActionMeta(action: LoveAction, currentUserId?: string) {
+  if (action.responsibleUserId === currentUserId && action.recipientUserId === currentUserId) {
+    return 'Just for you';
+  }
+
   if (action.responsibleUserId === currentUserId) {
     return `You → ${action.recipientUserEmail}`;
   }
@@ -146,11 +150,11 @@ function getActionMeta(action: LoveAction, currentUserId?: string) {
 function getVisibilityCopy(visibility: LovePreferenceVisibility) {
   switch (visibility) {
     case 'private':
-      return 'Private preferences stay on your account until you decide to turn them into a shared proposal.';
+      return 'Private preferences stay on your account until you decide to act on them or share them later.';
     case 'shared':
-      return 'Shared preferences are easy to turn into partner-visible Love Actions.';
+      return 'Shared preferences are easy to turn into visible Love Actions.';
     case 'surprise':
-      return 'Surprise preferences are shared with more mystery in mind when turned into a Love Action.';
+      return 'Surprise preferences keep a little mystery when you turn them into action.';
     default:
       return '';
   }
@@ -294,10 +298,10 @@ export default function LoveScreen() {
   const trimmedMessage = messageText.trim();
   const trimmedPreference = preferenceText.trim();
   const trimmedActionTitle = actionTitle.trim();
+  const isConnected = !!profile?.coupleId;
   const canSend =
     !!user &&
     hydrated &&
-    !!profile?.coupleId &&
     !relationshipSyncing &&
     !sending &&
     (trimmedMessage.length > 0 || strokes.length > 0);
@@ -356,6 +360,10 @@ export default function LoveScreen() {
     () => actions.filter(action => action.recipientUserId === user?.uid && action.status === 'proposed').length,
     [actions, user?.uid],
   );
+  const dueActionCount = useMemo(
+    () => actions.filter(action => action.status === 'due').length,
+    [actions],
+  );
 
   const loadNotePrompt = (promptId: string) => {
     const prompt = LOVE_NOTE_PROMPTS.find(candidate => candidate.id === promptId);
@@ -410,12 +418,7 @@ export default function LoveScreen() {
 
   const handleSend = async () => {
     if (!user) {
-      setSnackbar('Sign in again to send a Love Note.');
-      return;
-    }
-
-    if (!profile?.coupleId) {
-      setSnackbar('Connect with your partner in Us before sending Love Notes.');
+      setSnackbar('Sign in again to save a Love Note.');
       return;
     }
 
@@ -439,10 +442,12 @@ export default function LoveScreen() {
       setNoteTags(['reconnection']);
       setSelectedPromptId(null);
       setStrokes([]);
-      setSnackbar('Your Love Note is now syncing to Home.');
-      navigation.navigate('Home');
+      setSnackbar(isConnected ? 'Your Love Note is now syncing to Home.' : 'Your Love Note was saved to your personal space.');
+      if (isConnected) {
+        navigation.navigate('Home');
+      }
     } catch (error: any) {
-      setSnackbar(error.message ?? 'Unable to send your Love Note right now.');
+      setSnackbar(error.message ?? 'Unable to save your Love Note right now.');
     } finally {
       setSending(false);
     }
@@ -487,7 +492,7 @@ export default function LoveScreen() {
     }
 
     if (preferenceTiming === 'custom' && !preferenceCustomTiming.trim()) {
-      setSnackbar('Add your custom timing so your partner knows when this matters most.');
+      setSnackbar(isConnected ? 'Add your custom timing so your partner knows when this matters most.' : 'Add your custom timing so this preference feels concrete and usable.');
       return;
     }
 
@@ -530,18 +535,13 @@ export default function LoveScreen() {
       return;
     }
 
-    if (!profile?.coupleId) {
-      setSnackbar('Connect with your partner in Us before proposing shared Love Actions.');
-      return;
-    }
-
     if (!trimmedActionTitle) {
       setSnackbar('Add a short Love Action title first.');
       return;
     }
 
     if (preferenceTiming === 'custom' && !preferenceCustomTiming.trim()) {
-      setSnackbar('Add your custom timing before turning this into a shared Love Action.');
+      setSnackbar(isConnected ? 'Add your custom timing before turning this into a shared Love Action.' : 'Add your custom timing before saving this Love Action.');
       return;
     }
 
@@ -549,7 +549,7 @@ export default function LoveScreen() {
 
     try {
       const nextDueAt = buildDueTimestamp(actionDueDate, actionDueAllDay, actionDueTime);
-      const responsibleUserId = actionResponsibleUserId ?? user.uid;
+      const responsibleUserId = isConnected ? actionResponsibleUserId ?? user.uid : user.uid;
       const input = {
         title: trimmedActionTitle,
         area: selectedArea,
@@ -558,8 +558,8 @@ export default function LoveScreen() {
         frequency: preferenceFrequency,
         timing: preferenceTiming,
         customTiming: preferenceTiming === 'custom' ? preferenceCustomTiming.trim() : null,
-        visibility: preferenceVisibility === 'private' ? ('shared' as const) : preferenceVisibility,
-        status: 'proposed' as const,
+        visibility: isConnected && preferenceVisibility === 'private' ? ('shared' as const) : preferenceVisibility,
+        status: isConnected ? ('proposed' as const) : ('scheduled' as const),
         nextDueAt,
         responsibleUserId,
         notes: '',
@@ -567,10 +567,10 @@ export default function LoveScreen() {
 
       if (editingActionId) {
         await updateLoveAction(user, editingActionId, input);
-        setSnackbar('Love Action proposal updated.');
+        setSnackbar(isConnected ? 'Love Action proposal updated.' : 'Personal Love Action updated.');
       } else {
         await createLoveAction(user, input);
-        setSnackbar('Love Action proposed.');
+        setSnackbar(isConnected ? 'Love Action proposed.' : 'Personal Love Action saved.');
       }
 
       resetActionForm();
@@ -727,7 +727,9 @@ export default function LoveScreen() {
     setSectionOffsets(current => (current[key] === nextY ? current : { ...current, [key]: nextY }));
   };
 
-  const visibleJumpSections = LOVE_JUMP_SECTIONS.filter(section => sectionOffsets[section.key] !== undefined);
+  const visibleJumpSections = LOVE_JUMP_SECTIONS.map(section =>
+    section.key === 'actions' ? { ...section, label: isConnected ? 'Shared Actions' : 'Love Actions' } : section,
+  ).filter(section => sectionOffsets[section.key] !== undefined);
 
   const handleJumpToSection = (key: string) => {
     const targetY = sectionOffsets[key];
@@ -752,35 +754,37 @@ export default function LoveScreen() {
             Love
           </Text>
           <Text style={styles.subheader}>
-            Shape the ways you want to be loved, turn them into shared proposals, and still leave something warm as a Love Note.
+            {isConnected
+              ? 'Shape the ways you want to be loved, turn them into shared proposals, and still leave something warm as a Love Note.'
+              : 'Shape the ways you want to be loved, save personal actions for follow-through, and keep warm notes close before you connect.'}
           </Text>
           <View style={styles.summaryRow}>
             <View style={styles.summaryPill}>
-              <Text style={styles.summaryLabel}>Shared {messages.length}</Text>
+              <Text style={styles.summaryLabel}>{isConnected ? `Shared ${messages.length}` : `Notes ${messages.length}`}</Text>
             </View>
             <View style={styles.summaryPill}>
               <Text style={styles.summaryLabel}>Preferences {ownPreferences.length}</Text>
             </View>
             <View style={styles.summaryPill}>
-              <Text style={styles.summaryLabel}>Proposals {proposedByMeCount}</Text>
+              <Text style={styles.summaryLabel}>{isConnected ? `Proposals ${proposedByMeCount}` : `Actions ${actions.length}`}</Text>
             </View>
             <View style={styles.summaryPill}>
-              <Text style={styles.summaryLabel}>Awaiting you {pendingMyResponseCount}</Text>
+              <Text style={styles.summaryLabel}>{isConnected ? `Awaiting you ${pendingMyResponseCount}` : `Due ${dueActionCount}`}</Text>
             </View>
             <View style={styles.summaryPill}>
-              <Text style={styles.summaryLabel}>{profile?.coupleId ? 'Connected' : 'Solo'}</Text>
+              <Text style={styles.summaryLabel}>{isConnected ? 'Connected' : 'Solo'}</Text>
             </View>
           </View>
           {!hydrated ? <Text style={styles.syncText}>Warming your Love Notes...</Text> : null}
           {!!relationshipError ? <Text style={styles.errorText}>{relationshipError}</Text> : null}
-          {!profile?.coupleId && !relationshipSyncing ? (
+          {!isConnected && !relationshipSyncing ? (
             <Card style={styles.connectionCard}>
               <Card.Content style={styles.connectionCardContent}>
                 <Text variant="titleMedium" style={styles.cardTitle}>
-                  Connect your partner first
+                  Share this space when you’re ready
                 </Text>
                 <Text style={styles.connectionBody}>
-                  Send a partner invite by email from Us. Once you’re linked, your Love Actions can move from personal clarity into shared agreement.
+                  Your personal Love Actions and Love Notes work now. Connect in Us when you want proposals, live sync, and partner-visible notes.
                 </Text>
                 <Button mode="contained" onPress={() => navigation.navigate('Us')} style={styles.primaryButton}>
                   Go to Us
@@ -920,7 +924,9 @@ export default function LoveScreen() {
                   Full Love Library
               </Text>
               <Text style={styles.foundationBody}>
-                Browse curated ways of loving by area, intention, effort, and visibility. Load any idea into your profile or your next shared proposal.
+                {isConnected
+                  ? 'Browse curated ways of loving by area, intention, effort, and visibility. Load any idea into your profile or your next shared proposal.'
+                  : 'Browse curated ways of loving by area, intention, effort, and visibility. Load any idea into your profile or your next personal action.'}
               </Text>
               <View style={styles.summaryRow}>
                 <View style={styles.summaryPill}>
@@ -1029,14 +1035,16 @@ export default function LoveScreen() {
             <Card style={styles.foundationCard}>
               <Card.Content style={styles.cardContent}>
                 <Text variant="titleMedium" style={styles.cardTitle}>
-                  Shared Love Actions
+                  {isConnected ? 'Shared Love Actions' : 'Personal Love Actions'}
               </Text>
               <Text style={styles.foundationBody}>
-                Turn a preference into a shared proposal. Your partner can accept it, send it back for rework, or move it through the relationship loop once it is active.
+                {isConnected
+                  ? 'Turn a preference into a shared proposal. Your partner can accept it, send it back for rework, or move it through the relationship loop once it is active.'
+                  : 'Turn a preference into a personal commitment you can schedule, complete, and appreciate for yourself as you build your rhythm.'}
               </Text>
               <TextInput
                 mode="outlined"
-                label="Shared Love Action title"
+                label={isConnected ? 'Shared Love Action title' : 'Personal Love Action title'}
                 value={actionTitle}
                 onChangeText={setActionTitle}
                 multiline
@@ -1048,20 +1056,28 @@ export default function LoveScreen() {
                 activeOutlineColor="#D79395"
                 placeholder="Plan a long hug after work this Friday."
               />
-              <ChoiceGroup
-                label="Who carries this?"
-                value={actionResponsibleUserId ?? user?.uid ?? 'me'}
-                options={[
-                  { value: user?.uid ?? 'me', label: 'I do' },
-                  { value: profile?.partnerId ?? 'partner', label: 'Partner does' },
-                ]}
-                onChange={value => setActionResponsibleUserId(value)}
-              />
-              <HelperText type="info" visible>
-                {actionResponsibleUserId === profile?.partnerId
-                  ? `${profile?.partnerEmail ?? 'Your partner'} will be the responsible partner for this action.`
-                  : 'You will be the responsible partner for this action.'}
-              </HelperText>
+              {isConnected ? (
+                <>
+                  <ChoiceGroup
+                    label="Who carries this?"
+                    value={actionResponsibleUserId ?? user?.uid ?? 'me'}
+                    options={[
+                      { value: user?.uid ?? 'me', label: 'I do' },
+                      { value: profile?.partnerId ?? 'partner', label: 'Partner does' },
+                    ]}
+                    onChange={value => setActionResponsibleUserId(value)}
+                  />
+                  <HelperText type="info" visible>
+                    {actionResponsibleUserId === profile?.partnerId
+                      ? `${profile?.partnerEmail ?? 'Your partner'} will be the responsible partner for this action.`
+                      : 'You will be the responsible partner for this action.'}
+                  </HelperText>
+                </>
+              ) : (
+                <HelperText type="info" visible>
+                  You will carry this personal Love Action yourself.
+                </HelperText>
+              )}
               <TextInput
                 mode="outlined"
                 label="Due date"
@@ -1096,7 +1112,9 @@ export default function LoveScreen() {
                 />
               ) : null}
               <HelperText type="info" visible>
-                Linked preference: {linkedPreferenceId ? 'ready to attach' : 'none selected yet'}. Private preferences become shared when turned into a shared Love Action.
+                {isConnected
+                  ? `Linked preference: ${linkedPreferenceId ? 'ready to attach' : 'none selected yet'}. Private preferences become shared when turned into a shared Love Action.`
+                  : `Linked preference: ${linkedPreferenceId ? 'ready to attach' : 'none selected yet'}. Personal Love Actions stay on your account until you connect and start sharing.`}
               </HelperText>
               <HelperText type="info" visible>
                 Due schedule: {actionDueAllDay ? `${actionDueDate} · all day` : `${actionDueDate} · ${actionDueTime}`}.
@@ -1106,12 +1124,12 @@ export default function LoveScreen() {
                   mode="contained"
                   onPress={() => void handleSaveAction()}
                   loading={savingAction}
-                  disabled={savingAction || !profile?.coupleId}
+                  disabled={savingAction}
                   style={styles.primaryButton}
                   buttonColor="#B25B63"
                   textColor="#FFF8F3"
                 >
-                  {editingActionId ? 'Update proposal' : 'Propose action'}
+                  {editingActionId ? (isConnected ? 'Update proposal' : 'Update action') : isConnected ? 'Propose action' : 'Save action'}
                 </Button>
                 <Button mode="text" onPress={resetActionForm} disabled={savingAction}>
                   Clear form
@@ -1119,7 +1137,7 @@ export default function LoveScreen() {
               </View>
               <View style={styles.stack}>
                 {actions.length === 0 ? (
-                  <Text style={styles.foundationMeta}>No shared Love Actions yet.</Text>
+                  <Text style={styles.foundationMeta}>{isConnected ? 'No shared Love Actions yet.' : 'No personal Love Actions yet.'}</Text>
                 ) : (
                   actions.map(action => {
                     const proposedByMe = action.proposedByUserId === user?.uid;
@@ -1258,11 +1276,13 @@ export default function LoveScreen() {
               Love Notes
             </Text>
             <Text style={styles.heroBody}>
-              Write a short note, add a fingertip gesture on the mirror, and send warmth straight into your shared Home.
+              {isConnected
+                ? 'Write a short note, add a fingertip gesture on the mirror, and send warmth straight into your shared Home.'
+                : 'Write a short note, add a fingertip gesture on the mirror, and save warmth in your personal Love space until you are ready to share it.'}
             </Text>
             <View style={styles.summaryRow}>
               <View style={styles.summaryPill}>
-                <Text style={styles.summaryLabel}>Shared {messages.length}</Text>
+                <Text style={styles.summaryLabel}>{isConnected ? `Shared ${messages.length}` : `Notes ${messages.length}`}</Text>
               </View>
               <View style={styles.summaryPill}>
                 <Text style={styles.summaryLabel}>Yours {ownMessageCount}</Text>
@@ -1301,7 +1321,7 @@ export default function LoveScreen() {
               strokes={strokes}
               onChangeStrokes={setStrokes}
               onGestureActiveChange={setMirrorGestureActive}
-              prompt={profile?.coupleId ? 'Write with your finger on the mirror.' : 'Connect your partner to send this Love Note.'}
+              prompt={isConnected ? 'Write with your finger on the mirror.' : 'Write with your finger on the mirror and save it for yourself.'}
             />
             </Surface>
             <Card style={styles.card}>
@@ -1371,7 +1391,7 @@ export default function LoveScreen() {
                   buttonColor={canSend ? '#B25B63' : '#D7C3BC'}
                   textColor={canSend ? '#FFF8F3' : '#8D7279'}
                 >
-                  Send Love Note
+                  {isConnected ? 'Send Love Note' : 'Save Love Note'}
                 </Button>
                 <Button mode="outlined" onPress={handleResetMirror} disabled={sending}>
                   Clear mirror
@@ -1387,9 +1407,9 @@ export default function LoveScreen() {
                   Recent Love Notes
               </Text>
               <Text style={styles.archiveMeta}>
-                {profile?.coupleId
-                  ? `${messages.length} Love Notes synced with ${profile.partnerEmail ?? 'your partner'}.`
-                  : 'No live thread yet. Connect with your partner in Us to start syncing notes.'}
+                {isConnected
+                  ? `${messages.length} Love Notes synced with ${profile?.partnerEmail ?? 'your partner'}.`
+                  : `${messages.length} personal Love Notes saved on your account.`}
               </Text>
               <View style={styles.stack}>
                 {recentLoveNotes.length === 0 ? (
@@ -1409,9 +1429,11 @@ export default function LoveScreen() {
                   ))
                 )}
               </View>
-              <Button mode="text" onPress={() => navigation.navigate('Home')} style={styles.archiveButton}>
-                Open Love Notes archive in Home
-              </Button>
+              {isConnected ? (
+                <Button mode="text" onPress={() => navigation.navigate('Home')} style={styles.archiveButton}>
+                  Open Love Notes archive in Home
+                </Button>
+              ) : null}
               </Card.Content>
             </Card>
           </View>

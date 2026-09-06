@@ -17,11 +17,15 @@ if (!getApps().length) {
 }
 
 const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
+const GOOGLE_PLACES_API_KEY = defineSecret('GOOGLE_PLACES_API_KEY');
 const INVITE_FROM_EMAIL = defineString('INVITE_FROM_EMAIL');
 const APP_STORE_LINK = defineString('APP_STORE_LINK', {
   default: 'Open the How 2 Love Me app and visit the Us tab to accept your invite.',
 });
 const IS_FUNCTIONS_EMULATOR = process.env.FUNCTIONS_EMULATOR === 'true';
+const MIN_NEARBY_RESTAURANT_RADIUS_MILES = 1;
+const MAX_NEARBY_RESTAURANT_RADIUS_MILES = 30;
+const METERS_PER_MILE = 1609.34;
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -283,6 +287,16 @@ function readOptionalTimestamp(value: unknown) {
   }
 
   return Timestamp.fromMillis(numeric);
+}
+
+function readRequiredFiniteNumber(value: unknown, label: string) {
+  const numeric = typeof value === 'number' ? value : Number(value);
+
+  if (!Number.isFinite(numeric)) {
+    throw new HttpsError('invalid-argument', `Invalid ${label}.`);
+  }
+
+  return numeric;
 }
 
 async function getRelationshipProfile(uid: string) {
@@ -598,6 +612,106 @@ async function refreshRelationshipMetricSnapshots(coupleId: string) {
 
   await batch.commit();
 }
+
+export const searchNearbyRestaurants = onCall(
+  {
+    secrets: [GOOGLE_PLACES_API_KEY],
+    timeoutSeconds: 60,
+  },
+  async request => {
+    const { uid, email } = requireAuth(request);
+    await ensureRelationshipProfile(uid, email);
+
+    const query = readRequiredString(request.data?.query, 'food type', 80);
+    const latitude = readRequiredFiniteNumber(request.data?.latitude, 'latitude');
+    const longitude = readRequiredFiniteNumber(request.data?.longitude, 'longitude');
+    const radiusMiles = readRequiredFiniteNumber(request.data?.radiusMiles, 'radius miles');
+
+    if (latitude < -90 || latitude > 90) {
+      throw new HttpsError('invalid-argument', 'Latitude is out of range.');
+    }
+
+    if (longitude < -180 || longitude > 180) {
+      throw new HttpsError('invalid-argument', 'Longitude is out of range.');
+    }
+
+    if (
+      radiusMiles < MIN_NEARBY_RESTAURANT_RADIUS_MILES
+      || radiusMiles > MAX_NEARBY_RESTAURANT_RADIUS_MILES
+    ) {
+      throw new HttpsError(
+        'invalid-argument',
+        `Search radius must be between ${MIN_NEARBY_RESTAURANT_RADIUS_MILES} and ${MAX_NEARBY_RESTAURANT_RADIUS_MILES} miles.`,
+      );
+    }
+
+    const radiusMeters = radiusMiles * METERS_PER_MILE;
+
+    const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY.value(),
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.googleMapsUri',
+      },
+      body: JSON.stringify({
+        textQuery: `${query} restaurant`,
+        includedType: 'restaurant',
+        strictTypeFiltering: true,
+        maxResultCount: 8,
+        rankPreference: 'RELEVANCE',
+        locationBias: {
+          circle: {
+            center: { latitude, longitude },
+            radius: radiusMeters,
+          },
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error('Google Places search failed', {
+        status: response.status,
+        query,
+        errorBody,
+      });
+
+      if (response.status === 403 && /API_KEY_SERVICE_BLOCKED|blocked/i.test(errorBody)) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Restaurant search is blocked for this project. Enable Places API (New) and allow this API key to use it.',
+        );
+      }
+
+      throw new HttpsError('internal', 'Restaurant search is unavailable right now.');
+    }
+
+    const payload = await response.json() as {
+      places?: Array<{
+        id?: string;
+        displayName?: { text?: string };
+        formattedAddress?: string;
+        location?: { latitude?: number; longitude?: number };
+        googleMapsUri?: string;
+      }>;
+    };
+
+    return {
+      success: true,
+      places: (payload.places ?? [])
+        .map(place => ({
+          placeId: place.id ?? '',
+          name: place.displayName?.text ?? '',
+          address: place.formattedAddress ?? '',
+          latitude: place.location?.latitude ?? NaN,
+          longitude: place.location?.longitude ?? NaN,
+          googleMapsUri: typeof place.googleMapsUri === 'string' ? place.googleMapsUri : null,
+        }))
+        .filter(place => place.placeId && place.name && place.address && Number.isFinite(place.latitude) && Number.isFinite(place.longitude)),
+    };
+  },
+);
 
 export const sendPartnerInvite = onCall(
   {

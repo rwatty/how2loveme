@@ -5,6 +5,7 @@
 - Android debug build: `./gradlew app:assembleDebug` (run from `android/`)
 - iOS simulator build: `xcodebuild -workspace ios/How2LoveMe.xcworkspace -scheme How2LoveMe -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build`
 - CocoaPods after native Firebase dependency changes: `pod install` (run from `ios/`)
+- After adding or rearranging screen content on any screen with a `Jump to` FAB, verify each jump target still scrolls to the correct section in-app.
 
 ## Mobile release config
 - Android release signing reads from Gradle properties or environment variables: `HOW2LOVEME_RELEASE_STORE_FILE`, `HOW2LOVEME_RELEASE_STORE_PASSWORD`, `HOW2LOVEME_RELEASE_KEY_ALIAS`, `HOW2LOVEME_RELEASE_KEY_PASSWORD`.
@@ -35,8 +36,11 @@
   - Secret: `RESEND_API_KEY`
   - Param: `INVITE_FROM_EMAIL`
   - Param: `APP_STORE_LINK` (optional; defaults to a plain in-app instruction string)
+- Required Functions secret for nearby restaurant search:
+  - Secret: `GOOGLE_PLACES_API_KEY`
 - Example setup and deploy commands:
   - `firebase --project <your-project-id> functions:secrets:set RESEND_API_KEY`
+  - `firebase --project <your-project-id> functions:secrets:set GOOGLE_PLACES_API_KEY`
   - `firebase --project <your-project-id> deploy --only functions`
   - `firebase --project <your-project-id> deploy --only functions:sendPartnerInvite,functions:acceptPartnerInvite,functions:declinePartnerInvite,functions:cancelPartnerInvite`
 

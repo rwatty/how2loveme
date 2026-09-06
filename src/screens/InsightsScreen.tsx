@@ -1,11 +1,10 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { type LayoutChangeEvent, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth } from '@react-native-firebase/auth';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons/static';
-import Svg, { Circle, Defs, Line, LinearGradient, Path, Stop } from 'react-native-svg';
 import JumpToSectionFab, { type JumpSection } from '../components/JumpToSectionFab';
 import {
   Button,
@@ -22,6 +21,7 @@ import {
 import {
   buildAreaBalance,
   buildHistoryFeed,
+  buildLiveMetricChartPoints,
   buildMetricChartPoints,
   buildPulseSummary,
   buildScoreBreakdown,
@@ -297,114 +297,84 @@ type TrendPoint = {
   streak: number;
 };
 
-type RenderPoint = {
-  id: string;
-  label: string;
-  x: number;
-  y: number;
-  value: number;
-};
-
-const CHART_VIEWBOX_WIDTH = 320;
-const CHART_VIEWBOX_HEIGHT = 132;
-const CHART_PADDING_X = 18;
-const CHART_PADDING_TOP = 16;
-const CHART_PADDING_BOTTOM = 26;
 const SPARKLINE_WIDTH = 120;
 const SPARKLINE_HEIGHT = 44;
-const SPARKLINE_PADDING_X = 6;
-const SPARKLINE_PADDING_Y = 8;
+const SPARKLINE_FRAME_VERTICAL_PADDING = 6;
+const SPARKLINE_SPARSE_THRESHOLD = 4;
+const MAX_SPARKLINE_BARS = 7;
+const SCORE_CHART_HEIGHT = 112;
 
-function buildRenderPoints(points: TrendPoint[], values: number[], maxValue: number, options?: {
-  width?: number;
-  height?: number;
-  paddingX?: number;
-  paddingTop?: number;
-  paddingBottom?: number;
-}) {
-  const width = options?.width ?? CHART_VIEWBOX_WIDTH;
-  const height = options?.height ?? CHART_VIEWBOX_HEIGHT;
-  const paddingX = options?.paddingX ?? CHART_PADDING_X;
-  const paddingTop = options?.paddingTop ?? CHART_PADDING_TOP;
-  const paddingBottom = options?.paddingBottom ?? CHART_PADDING_BOTTOM;
-  const usableWidth = width - paddingX * 2;
-  const usableHeight = height - paddingTop - paddingBottom;
-  const safeMaxValue = Math.max(1, maxValue);
+function getBarHeights(values: number[], maxValue: number, minimumRatio = 0.18) {
+  const safeMax = Math.max(maxValue, 1);
+  return values.map(value => {
+    if (!Number.isFinite(value) || value <= 0) {
+      return minimumRatio;
+    }
 
-  return points.map((point, index) => {
-    const x = points.length === 1 ? width / 2 : paddingX + (usableWidth * index) / Math.max(1, points.length - 1);
-    const normalized = Math.max(0, Math.min(1, values[index] / safeMaxValue));
-    const y = paddingTop + (1 - normalized) * usableHeight;
-
-    return {
-      id: point.id,
-      label: point.label,
-      x,
-      y,
-      value: values[index],
-    } satisfies RenderPoint;
+    return Math.max(minimumRatio, Math.min(1, value / safeMax));
   });
 }
 
-function buildLinePath(points: RenderPoint[]) {
-  if (points.length === 0) {
-    return '';
-  }
-
-  return points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
-}
-
-function buildAreaPath(points: RenderPoint[], height: number, bottomPadding: number) {
-  if (points.length === 0) {
-    return '';
-  }
-
-  const floorY = height - bottomPadding;
-  return [
-    `M ${points[0]?.x ?? 0} ${floorY}`,
-    ...points.map(point => `L ${point.x} ${point.y}`),
-    `L ${points[points.length - 1]?.x ?? 0} ${floorY}`,
-    'Z',
-  ].join(' ');
+function shouldShowChartLabel(index: number, total: number) {
+  return index === 0 || index === total - 1 || index % 2 === 0;
 }
 
 function TrendSparkline({
   points,
   metric,
   color,
+  showAnchors = false,
 }: {
   points: TrendPoint[];
   metric: 'score' | 'streak';
   color: string;
+  showAnchors?: boolean;
 }) {
   if (points.length === 0) {
     return <View style={styles.sparklinePlaceholder} />;
   }
 
-  const values = points.map(point => (metric === 'score' ? point.score : point.streak));
-  const renderPoints = buildRenderPoints(points, values, Math.max(...values, 1), {
-    width: SPARKLINE_WIDTH,
-    height: SPARKLINE_HEIGHT,
-    paddingX: SPARKLINE_PADDING_X,
-    paddingTop: SPARKLINE_PADDING_Y,
-    paddingBottom: SPARKLINE_PADDING_Y,
-  });
+  const visiblePoints = points.slice(-MAX_SPARKLINE_BARS);
+  const values = visiblePoints.map(point => (metric === 'score' ? point.score : point.streak));
+  const heights = getBarHeights(values, Math.max(...values, 1), showAnchors ? 0.18 : 0.24);
+  const isSparse = showAnchors && visiblePoints.length < SPARKLINE_SPARSE_THRESHOLD;
+  const plotHeight = showAnchors
+    ? SPARKLINE_HEIGHT - SPARKLINE_FRAME_VERTICAL_PADDING * 2
+    : SPARKLINE_HEIGHT;
 
   return (
-    <Svg width={SPARKLINE_WIDTH} height={SPARKLINE_HEIGHT} viewBox={`0 0 ${SPARKLINE_WIDTH} ${SPARKLINE_HEIGHT}`}>
-      <Path d={buildLinePath(renderPoints)} stroke={color} strokeWidth={2.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-      {renderPoints.map((point, index) => (
-        <Circle
-          key={`${metric}-spark-${point.id}`}
-          cx={point.x}
-          cy={point.y}
-          r={index === renderPoints.length - 1 ? 3.4 : 2.4}
-          fill={index === renderPoints.length - 1 ? '#FFF7F2' : color}
-          stroke={color}
-          strokeWidth={index === renderPoints.length - 1 ? 2 : 0}
-        />
-      ))}
-    </Svg>
+    <View style={styles.sparklineWrap}>
+      <View style={[styles.sparklineRow, showAnchors ? styles.sparklineRowAnchored : null]}>
+        {visiblePoints.map((point, index) => {
+          const isLatest = index === visiblePoints.length - 1;
+
+          return (
+            <View key={`${metric}-spark-${point.id}`} style={styles.sparklineBarSlot}>
+              <View
+                style={[
+                  styles.sparklineBar,
+                  showAnchors ? styles.sparklineBarThin : null,
+                  {
+                    backgroundColor: color,
+                    height: Math.max(10, Math.round(plotHeight * heights[index]!)),
+                    opacity: isLatest ? 1 : 0.28 + heights[index]! * 0.48,
+                  },
+                ]}
+              />
+            </View>
+          );
+        })}
+      </View>
+      {showAnchors ? (
+        <>
+          <View style={styles.sparklineAnchorRow}>
+            <Text style={styles.sparklineAnchorLabel}>Older</Text>
+            <Text style={styles.sparklineAnchorLabel}>Now</Text>
+          </View>
+          {isSparse ? <Text style={styles.sparklineCaption}>Trend just starting</Text> : null}
+        </>
+      ) : null}
+    </View>
   );
 }
 
@@ -437,9 +407,9 @@ function InsightsTopSummaryCard({
     <Surface style={styles.topSummaryCard} elevation={0}>
       <View style={styles.topSummaryHeader}>
         <View style={styles.topSummaryPrimary}>
-          <Text style={styles.topSummaryEyebrow}>Relationship pulse</Text>
+          <Text style={styles.topSummaryEyebrow}>{connected ? 'Relationship pulse' : 'Personal pulse'}</Text>
           <Text style={styles.topSummaryScore}>{Math.round(score)}</Text>
-          <Text style={styles.topSummaryScoreMeta}>Connection Score</Text>
+          <Text style={styles.topSummaryScoreMeta}>{connected ? 'Connection Score' : 'Care Score'}</Text>
           <View style={styles.summaryRow}>
             <StatusPill
               icon={getPulseTrendIconName(pulseTrend)}
@@ -457,8 +427,8 @@ function InsightsTopSummaryCard({
           </View>
         </View>
         <View style={styles.topSummarySparkWrap}>
-          <TrendSparkline points={chartPoints} metric="score" color="#B25B63" />
           <Text style={styles.sparklineMeta}>Recent score</Text>
+          <TrendSparkline points={chartPoints} metric="score" color="#B25B63" showAnchors />
         </View>
       </View>
       <View style={styles.topSummaryGrid}>
@@ -478,7 +448,12 @@ function InsightsTopSummaryCard({
       <View style={styles.summaryRow}>
         <StatusPill icon="lock-outline" label={`Private ${privateCount}`} style={styles.summaryPill} textStyle={styles.summaryLabel} />
         <StatusPill icon="clock-outline" label={`Later ${laterCount}`} style={styles.summaryPill} textStyle={styles.summaryLabel} />
-        <StatusPill icon="account-group-outline" label={`Shared ${sharedCount}`} style={styles.summaryPill} textStyle={styles.summaryLabel} />
+        <StatusPill
+          icon={connected ? 'account-group-outline' : 'heart-outline'}
+          label={connected ? `Shared ${sharedCount}` : `Notes ${privateCount + laterCount}`}
+          style={styles.summaryPill}
+          textStyle={styles.summaryLabel}
+        />
       </View>
     </Surface>
   );
@@ -512,10 +487,9 @@ function ScoreLineChart({
     );
   }
 
-  const values = points.map(point => point.score);
-  const renderPoints = buildRenderPoints(points, values, maxValue);
-  const linePath = buildLinePath(renderPoints);
-  const areaPath = buildAreaPath(renderPoints, CHART_VIEWBOX_HEIGHT, CHART_PADDING_BOTTOM);
+  const visiblePoints = points.slice(-8);
+  const values = visiblePoints.map(point => point.score);
+  const heights = getBarHeights(values, maxValue, 0.14);
 
   return (
     <Surface style={styles.chartCard} elevation={0}>
@@ -532,36 +506,27 @@ function ScoreLineChart({
         </View>
       </View>
       <View style={styles.lineChartFrame}>
-        <Svg width="100%" height={CHART_VIEWBOX_HEIGHT} viewBox={`0 0 ${CHART_VIEWBOX_WIDTH} ${CHART_VIEWBOX_HEIGHT}`}>
-          <Defs>
-            <LinearGradient id="scoreArea" x1="0" y1="0" x2="0" y2="1">
-              <Stop offset="0" stopColor="#D79395" stopOpacity="0.32" />
-              <Stop offset="1" stopColor="#D79395" stopOpacity="0.03" />
-            </LinearGradient>
-          </Defs>
-          {[0.25, 0.5, 0.75].map(step => {
-            const y = CHART_PADDING_TOP + (CHART_VIEWBOX_HEIGHT - CHART_PADDING_TOP - CHART_PADDING_BOTTOM) * step;
-            return <Line key={`grid-${step}`} x1={CHART_PADDING_X} x2={CHART_VIEWBOX_WIDTH - CHART_PADDING_X} y1={y} y2={y} stroke="#F0DED4" strokeWidth={1} />;
-          })}
-          <Path d={areaPath} fill="url(#scoreArea)" />
-          <Path d={linePath} stroke={color} strokeWidth={3} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-          {renderPoints.map((point, index) => (
-            <Circle
-              key={`score-point-${point.id}`}
-              cx={point.x}
-              cy={point.y}
-              r={index === renderPoints.length - 1 ? 5 : 3.2}
-              fill={index === renderPoints.length - 1 ? '#FFF7F2' : color}
-              stroke={color}
-              strokeWidth={index === renderPoints.length - 1 ? 2.4 : 0}
-            />
+        <View style={styles.scoreBarsRow}>
+          {visiblePoints.map((point, index) => (
+            <View key={`score-point-${point.id}`} style={styles.scoreBarColumn}>
+              <View
+                style={[
+                  styles.scoreBar,
+                  {
+                    backgroundColor: color,
+                    height: Math.max(16, Math.round(SCORE_CHART_HEIGHT * heights[index]!)),
+                    opacity: index === visiblePoints.length - 1 ? 1 : 0.24 + heights[index]! * 0.58,
+                  },
+                ]}
+              />
+            </View>
           ))}
-        </Svg>
+        </View>
       </View>
       <View style={styles.chartAxisRow}>
-        {points.map((point, index) => (
+        {visiblePoints.map((point, index) => (
           <Text key={`score-label-${point.id}`} style={styles.chartAxisLabel}>
-            {index === 0 || index === points.length - 1 || index % 2 === 0 ? point.label : ' '}
+            {shouldShowChartLabel(index, visiblePoints.length) ? point.label : ' '}
           </Text>
         ))}
       </View>
@@ -585,15 +550,12 @@ function ConnectionTensionLineChart({
     return (
       <Surface style={styles.chartCard} elevation={0}>
         <Text style={styles.chartTitle}>{title}</Text>
-        <Text style={styles.emptyCopy}>Shared snapshots will fill this in after your first metrics sync.</Text>
+        <Text style={styles.emptyCopy}>Recent activity will fill this in after your first metrics sync.</Text>
       </Surface>
     );
   }
 
-  const connectionValues = points.map(point => point.connection);
-  const tensionValues = points.map(point => point.tension);
-  const connectionPoints = buildRenderPoints(points, connectionValues, 5);
-  const tensionPoints = buildRenderPoints(points, tensionValues, 5);
+  const visiblePoints = points.slice(-6);
 
   return (
     <Surface style={styles.chartCard} elevation={0}>
@@ -613,43 +575,32 @@ function ConnectionTensionLineChart({
           </View>
         </View>
       </View>
-      <View style={styles.lineChartFrame}>
-        <Svg width="100%" height={CHART_VIEWBOX_HEIGHT} viewBox={`0 0 ${CHART_VIEWBOX_WIDTH} ${CHART_VIEWBOX_HEIGHT}`}>
-          {[1, 2, 3, 4].map(level => {
-            const y = CHART_PADDING_TOP + ((CHART_VIEWBOX_HEIGHT - CHART_PADDING_TOP - CHART_PADDING_BOTTOM) * level) / 5;
-            return <Line key={`dual-grid-${level}`} x1={CHART_PADDING_X} x2={CHART_VIEWBOX_WIDTH - CHART_PADDING_X} y1={y} y2={y} stroke="#F0DED4" strokeWidth={1} />;
-          })}
-          <Path d={buildLinePath(connectionPoints)} stroke="#B25B63" strokeWidth={3} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-          <Path d={buildLinePath(tensionPoints)} stroke="#7D8AB8" strokeWidth={3} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-          {connectionPoints.map((point, index) => (
-            <Circle
-              key={`connection-point-${point.id}`}
-              cx={point.x}
-              cy={point.y}
-              r={index === connectionPoints.length - 1 ? 4.5 : 3}
-              fill={index === connectionPoints.length - 1 ? '#FFF7F2' : '#B25B63'}
-              stroke="#B25B63"
-              strokeWidth={index === connectionPoints.length - 1 ? 2 : 0}
-            />
-          ))}
-          {tensionPoints.map((point, index) => (
-            <Circle
-              key={`tension-point-${point.id}`}
-              cx={point.x}
-              cy={point.y}
-              r={index === tensionPoints.length - 1 ? 4.5 : 3}
-              fill={index === tensionPoints.length - 1 ? '#FFF7F2' : '#7D8AB8'}
-              stroke="#7D8AB8"
-              strokeWidth={index === tensionPoints.length - 1 ? 2 : 0}
-            />
-          ))}
-        </Svg>
-      </View>
-      <View style={styles.chartAxisRow}>
-        {points.map((point, index) => (
-          <Text key={`dual-label-${point.id}`} style={styles.chartAxisLabel}>
-            {index === 0 || index === points.length - 1 || index % 2 === 0 ? point.label : ' '}
-          </Text>
+      <View style={styles.dualMetricList}>
+        {visiblePoints.map(point => (
+          <View key={`dual-row-${point.id}`} style={styles.dualMetricRow}>
+            <Text style={styles.dualMetricLabel}>{point.label}</Text>
+            <View style={styles.dualMetricBars}>
+              <View style={styles.dualMetricTrack}>
+                <View
+                  style={[
+                    styles.dualMetricFill,
+                    styles.dualMetricConnection,
+                    { width: `${Math.max(14, (point.connection / 5) * 100)}%` },
+                  ]}
+                />
+              </View>
+              <View style={styles.dualMetricTrack}>
+                <View
+                  style={[
+                    styles.dualMetricFill,
+                    styles.dualMetricTension,
+                    { width: `${Math.max(14, (point.tension / 5) * 100)}%` },
+                  ]}
+                />
+              </View>
+            </View>
+            <Text style={styles.dualMetricValue}>{point.connection.toFixed(1)} / {point.tension.toFixed(1)}</Text>
+          </View>
         ))}
       </View>
       <Text style={styles.entryPreview}>{headline}</Text>
@@ -873,6 +824,7 @@ export default function InsightsScreen() {
   const [snackbar, setSnackbar] = useState('');
   const [sectionOffsets, setSectionOffsets] = useState<Record<string, number>>({});
   const scrollViewRef = useRef<any>(null);
+  const isConnected = !!profile?.coupleId;
 
   const writtenCount = useMemo(
     () => [appreciation, need, reflection, nextStep].filter(value => value.trim().length > 0).length,
@@ -906,7 +858,7 @@ export default function InsightsScreen() {
     }
   }, [archiveFilter, laterEntries, privateOnlyEntries, sharedEntries]);
   const scoreWindowStart = useMemo(() => getMetricsWindowStart(scoreWindow), [scoreWindow]);
-  const relationshipEntries = profile?.coupleId ? sharedEntries : privateEntries;
+  const relationshipEntries = isConnected ? sharedEntries : privateEntries;
   const scoreBreakdown = useMemo(
     () =>
       buildScoreBreakdown({
@@ -914,8 +866,9 @@ export default function InsightsScreen() {
         insights: relationshipEntries,
         notes: loveNotes,
         windowStart: scoreWindowStart,
+        isConnected,
       }),
-    [loveActions, loveNotes, relationshipEntries, scoreWindowStart],
+    [isConnected, loveActions, loveNotes, relationshipEntries, scoreWindowStart],
   );
   const pulseSummary = useMemo(
     () =>
@@ -960,8 +913,17 @@ export default function InsightsScreen() {
   const latestSnapshot = selectedWindowSnapshots.at(-1) ?? null;
   const previousSnapshot = selectedWindowSnapshots.at(-2) ?? null;
   const chartPoints = useMemo(
-    () => buildMetricChartPoints(metricSnapshots, scoreWindow),
-    [metricSnapshots, scoreWindow],
+    () =>
+      selectedWindowSnapshots.length > 0
+        ? buildMetricChartPoints(metricSnapshots, scoreWindow)
+        : buildLiveMetricChartPoints({
+            actions: loveActions,
+            insights: relationshipEntries,
+            notes: loveNotes,
+            window: scoreWindow,
+            isConnected,
+          }),
+    [isConnected, loveActions, loveNotes, metricSnapshots, relationshipEntries, scoreWindow, selectedWindowSnapshots.length],
   );
   const trendInterpretation = useMemo(
     () =>
@@ -990,15 +952,37 @@ export default function InsightsScreen() {
   const displayAverageConnection = latestSnapshot?.averageConnection ?? pulseSummary.averageConnection;
   const displayAverageTension = latestSnapshot?.averageTension ?? pulseSummary.averageTension;
   const displayStreak = latestSnapshot?.checkInStreakDays ?? pulseSummary.checkInStreakDays;
-  const loadingCopy = !hydrated || relationshipSyncing || syncingPrivate || syncingShared || (profile?.coupleId && syncingSnapshots);
+  const loadingCopy = !hydrated || relationshipSyncing || syncingPrivate || syncingShared || (isConnected && syncingSnapshots);
   const canSubmit = hydrated && writtenCount > 0 && !saving;
+
+  useEffect(() => {
+    if (!isConnected && archiveFilter === 'shared') {
+      setArchiveFilter('private');
+    }
+  }, [archiveFilter, isConnected]);
+
+  useEffect(() => {
+    if (!isConnected && visibility === 'shared') {
+      setVisibility('private');
+    }
+  }, [isConnected, visibility]);
 
   const registerSection = (key: string) => ({ nativeEvent: { layout } }: LayoutChangeEvent) => {
     const nextY = layout.y;
     setSectionOffsets(current => (current[key] === nextY ? current : { ...current, [key]: nextY }));
   };
 
-  const visibleJumpSections = INSIGHTS_JUMP_SECTIONS.filter(section => sectionOffsets[section.key] !== undefined);
+  const visibleJumpSections = INSIGHTS_JUMP_SECTIONS.map(section => {
+    if (section.key === 'pulse') {
+      return { ...section, label: isConnected ? 'Relationship Pulse' : 'Personal Pulse' };
+    }
+
+    if (section.key === 'score') {
+      return { ...section, label: isConnected ? 'Connection Score' : 'Care Score' };
+    }
+
+    return section;
+  }).filter(section => sectionOffsets[section.key] !== undefined);
 
   const handleJumpToSection = (key: string) => {
     const targetY = sectionOffsets[key];
@@ -1047,7 +1031,7 @@ export default function InsightsScreen() {
       return;
     }
 
-    if (visibility === 'shared' && !profile?.coupleId) {
+    if (visibility === 'shared' && !isConnected) {
       setSnackbar('Connect with your partner in Us before sharing insights.');
       return;
     }
@@ -1193,7 +1177,7 @@ export default function InsightsScreen() {
     : [
         { value: 'private', label: 'Private' },
         { value: 'decideLater', label: 'Later' },
-        { value: 'shared', label: 'Share', disabled: !profile?.coupleId },
+        { value: 'shared', label: 'Share', disabled: !isConnected },
       ];
 
   return (
@@ -1209,7 +1193,9 @@ export default function InsightsScreen() {
             Insights
           </Text>
           <Text style={styles.subheader}>
-            Check in, read the pulse, and decide what stays private versus shared.
+            {isConnected
+              ? 'Check in, read the pulse, and decide what stays private versus shared.'
+              : 'Check in, read your own patterns, and build clarity before you decide what should be shared later.'}
           </Text>
           <InsightsTopSummaryCard
             score={displayScore}
@@ -1218,7 +1204,7 @@ export default function InsightsScreen() {
             pulseTrend={displayPulseTrend}
             streak={displayStreak}
             weakestArea={scoreBreakdown.weakestArea ? LOVE_AREA_LABELS[scoreBreakdown.weakestArea] : null}
-            connected={!!profile?.coupleId}
+            connected={isConnected}
             chartPoints={chartPoints}
             privateCount={privateOnlyEntries.length}
             laterCount={laterEntries.length}
@@ -1226,14 +1212,14 @@ export default function InsightsScreen() {
           />
           {loadingCopy ? <Text style={styles.syncText}>Syncing your reflection space...</Text> : null}
           {!!relationshipError ? <Text style={styles.errorText}>{relationshipError}</Text> : null}
-          {!profile?.coupleId ? (
+          {!isConnected ? (
             <Card style={styles.connectionCard}>
               <Card.Content style={styles.connectionCardContent}>
                 <Text variant="titleMedium" style={styles.cardTitle}>
-                  Shared insights unlock after you connect
+                  Share your reflections when you’re ready
                 </Text>
                 <Text style={styles.connectionBody}>
-                  You can save private reflections now. Connect in Us when you’re ready to share relationship pulse check-ins with your partner.
+                  Private check-ins, personal Love Actions, and personal Love Notes work now. Connect in Us when you want to turn this into a shared relationship dashboard.
                 </Text>
                 <Button mode="contained" onPress={() => navigation.navigate('Us')} style={styles.primaryButton}>
                   Go to Us
@@ -1246,8 +1232,12 @@ export default function InsightsScreen() {
               <Card.Content>
                 <SectionHeading
                   section="pulse"
-                  title="Relationship pulse"
-                  meta="Shared reflections, tension, connection, and follow-through in one read."
+                  title={isConnected ? 'Relationship pulse' : 'Personal pulse'}
+                  meta={
+                    isConnected
+                      ? 'Shared reflections, tension, connection, and follow-through in one read.'
+                      : 'Private reflections, personal actions, and Love Notes in one read.'
+                  }
                 />
               <View style={styles.metricsRow}>
                 <StatusPill icon="heart-pulse" label={displayPulseLabel} style={styles.metricPill} textStyle={styles.metricLabel} />
@@ -1290,8 +1280,10 @@ export default function InsightsScreen() {
                 {latestSnapshot
                   ? `${latestSnapshot.capturedDay} snapshot loaded for this ${getWindowLabel(scoreWindow)} window.`
                   : pulseSummary.recentReflectionCount === 0
-                    ? 'No recent shared reflections yet. Save or share a check-in below to start the pulse history.'
-                    : `${pulseSummary.recentReflectionCount} reflections and ${scoreBreakdown.measuredNotes.length} Love Notes are shaping this pulse.`}
+                    ? isConnected
+                      ? 'No recent shared reflections yet. Save or share a check-in below to start the pulse history.'
+                      : 'No recent reflections yet. Save a private check-in below to start your pulse history.'
+                    : `${pulseSummary.recentReflectionCount} reflections and ${scoreBreakdown.measuredNotes.length} Love Notes are shaping this ${isConnected ? 'pulse' : 'personal pulse'}.`}
               </Text>
               </Card.Content>
             </Card>
@@ -1301,7 +1293,7 @@ export default function InsightsScreen() {
               <Card.Content>
                 <SectionHeading
                   section="score"
-                  title="Connection Score"
+                  title={isConnected ? 'Connection Score' : 'Care Score'}
                   meta="Weighted by recency, follow-through, reflection depth, emotional presence, and Love Note care."
                 />
               <Surface style={styles.segmentedWrap} elevation={0}>
@@ -1330,12 +1322,17 @@ export default function InsightsScreen() {
               <View style={styles.metricsRow}>
                 <MetricPill icon="gesture-tap-button" label={`Appreciation ${Math.round(scoreBreakdown.appreciationScore)}%`} />
                 <MetricPill icon="emoticon-heart-outline" label={`Presence ${Math.round(scoreBreakdown.emotionalPresenceScore)}%`} />
-                <MetricPill icon="account-group-outline" label={`Shared ${Math.round(scoreBreakdown.sharedReflectionRatio)}%`} />
+                <MetricPill
+                  icon={isConnected ? 'account-group-outline' : 'clock-outline'}
+                  label={isConnected ? `Shared ${Math.round(scoreBreakdown.sharedReflectionRatio)}%` : `Later ${laterEntries.length}`}
+                />
               </View>
               <Text style={styles.archiveMeta}>
                 {scoreBreakdown.measuredActions.length === 0 && scoreBreakdown.measuredInsights.length === 0 && scoreBreakdown.measuredNotes.length === 0
-                  ? `No shared signals are shaping this ${getWindowLabel(scoreWindow)} score yet.`
-                  : `${scoreBreakdown.measuredActions.length} Love Actions, ${scoreBreakdown.measuredInsights.length} reflections, and ${scoreBreakdown.measuredNotes.length} Love Notes are shaping this score.`}
+                  ? isConnected
+                    ? `No shared signals are shaping this ${getWindowLabel(scoreWindow)} score yet.`
+                    : `No personal signals are shaping this ${getWindowLabel(scoreWindow)} score yet.`
+                  : `${scoreBreakdown.measuredActions.length} Love Actions, ${scoreBreakdown.measuredInsights.length} reflections, and ${scoreBreakdown.measuredNotes.length} Love Notes are shaping this ${isConnected ? 'score' : 'personal score'}.`}
               </Text>
               <Surface style={styles.explanationCard} elevation={0}>
                 <View style={styles.scoreComponentHeader}>
@@ -1406,7 +1403,11 @@ export default function InsightsScreen() {
                 <SectionHeading
                   section="trends"
                   title="Trends over time"
-                  meta="Daily snapshots show whether momentum is building or slipping."
+                  meta={
+                    isConnected
+                      ? 'Daily snapshots show whether momentum is building or slipping.'
+                      : 'Recent activity shows whether your reflection, care, and follow-through are building or slipping.'
+                  }
                 />
               <View style={styles.chartStack}>
                 <ScoreLineChart
@@ -1417,7 +1418,11 @@ export default function InsightsScreen() {
                   currentValue={displayScore}
                   delta={scoreChangeSummary.delta}
                   supportingText={scoreChangeSummary.body}
-                  emptyCopy="Score history will appear after the first snapshot is written for this couple."
+                  emptyCopy={
+                    isConnected
+                      ? 'Score history will appear after the first snapshot is written for this couple.'
+                      : 'Score history will appear once a few days of personal reflections, Love Notes, or actions have accumulated.'
+                  }
                 />
                 <ConnectionTensionLineChart
                   title="Connection vs tension"
@@ -1436,7 +1441,11 @@ export default function InsightsScreen() {
                 <SectionHeading
                   section="coaching"
                   title="Coaching recommendations"
-                  meta="Suggestions based on weak areas, tension, follow-through, and shared visibility."
+                  meta={
+                    isConnected
+                      ? 'Suggestions based on weak areas, tension, follow-through, and shared visibility.'
+                      : 'Suggestions based on weak areas, tension, follow-through, and reflection patterns.'
+                  }
                 />
               <View style={styles.entryList}>
                 {scoreBreakdown.recommendations.length === 0 ? (
@@ -1544,7 +1553,7 @@ export default function InsightsScreen() {
             <Card.Content>
               <View style={styles.sectionHeader}>
                 <Text variant="titleMedium" style={styles.cardTitle}>
-                  Relationship area balance
+                  {isConnected ? 'Relationship area balance' : 'Care area balance'}
                 </Text>
                 <Text style={styles.sectionMeta}>Which kinds of care are landing in this window.</Text>
               </View>
@@ -1678,7 +1687,7 @@ export default function InsightsScreen() {
               <View style={styles.ratingStack}>
                 <RatingField label="How do you feel right now?" value={mood} onChange={setMood} hints={MOOD_HINTS} />
                 <RatingField
-                  label="How connected do you feel to us?"
+                  label={isConnected ? 'How connected do you feel to us?' : 'How connected do you feel to yourself and this season?'}
                   value={connection}
                   onChange={setConnection}
                   hints={CONNECTION_HINTS}
@@ -1792,7 +1801,7 @@ export default function InsightsScreen() {
                   buttons={[
                     { value: 'private', label: 'Private' },
                     { value: 'decideLater', label: 'Later' },
-                    { value: 'shared', label: 'Shared' },
+                    { value: 'shared', label: 'Shared', disabled: !isConnected },
                   ]}
                   style={styles.archiveFilterSelector}
                   theme={{ roundness: 999 }}
@@ -1973,15 +1982,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   topSummarySparkWrap: {
-    alignItems: 'center',
+    width: SPARKLINE_WIDTH,
+    alignItems: 'stretch',
     justifyContent: 'center',
     paddingHorizontal: 4,
+    gap: 4,
   },
   sparklineMeta: {
-    marginTop: 2,
     color: '#8F6B74',
     fontSize: 11,
     fontWeight: '700',
+    textAlign: 'center',
   },
   topSummaryGrid: {
     flexDirection: 'row',
@@ -2043,7 +2054,56 @@ const styles = StyleSheet.create({
   },
   sparklinePlaceholder: {
     width: SPARKLINE_WIDTH,
+    height: SPARKLINE_HEIGHT + 16,
+  },
+  sparklineWrap: {
+    gap: 4,
+  },
+  sparklineRow: {
+    width: SPARKLINE_WIDTH,
     height: SPARKLINE_HEIGHT,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 4,
+  },
+  sparklineRowAnchored: {
+    borderRadius: 14,
+    backgroundColor: '#FFF8F3',
+    borderWidth: 1,
+    borderColor: '#F0DED4',
+    paddingHorizontal: 8,
+    paddingVertical: SPARKLINE_FRAME_VERTICAL_PADDING,
+  },
+  sparklineBarSlot: {
+    flex: 1,
+    height: '100%',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  sparklineBar: {
+    width: 8,
+    minHeight: 10,
+    borderRadius: 999,
+  },
+  sparklineBarThin: {
+    width: 6,
+  },
+  sparklineAnchorRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 2,
+  },
+  sparklineAnchorLabel: {
+    color: '#8F6B74',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  sparklineCaption: {
+    color: '#8F6B74',
+    fontSize: 10,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   syncText: {
     color: '#B25B63',
@@ -2456,7 +2516,28 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF3EA',
     borderWidth: 1,
     borderColor: '#F0DED4',
+    paddingHorizontal: 10,
+    paddingVertical: 12,
     overflow: 'hidden',
+  },
+  scoreBarsRow: {
+    height: SCORE_CHART_HEIGHT,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  scoreBarColumn: {
+    flex: 1,
+    alignSelf: 'stretch',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  scoreBar: {
+    width: '100%',
+    maxWidth: 22,
+    minHeight: 16,
+    borderRadius: 999,
   },
   chartAxisRow: {
     flexDirection: 'row',
@@ -2493,6 +2574,47 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   chartLegendLabel: {
+    color: '#7C5964',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  dualMetricList: {
+    gap: 8,
+  },
+  dualMetricRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  dualMetricLabel: {
+    width: 34,
+    color: '#8F6B74',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  dualMetricBars: {
+    flex: 1,
+    gap: 5,
+  },
+  dualMetricTrack: {
+    height: 9,
+    borderRadius: 999,
+    backgroundColor: '#FFF3EA',
+    overflow: 'hidden',
+  },
+  dualMetricFill: {
+    height: '100%',
+    borderRadius: 999,
+  },
+  dualMetricConnection: {
+    backgroundColor: '#B25B63',
+  },
+  dualMetricTension: {
+    backgroundColor: '#7D8AB8',
+  },
+  dualMetricValue: {
+    width: 52,
+    textAlign: 'right',
     color: '#7C5964',
     fontSize: 11,
     fontWeight: '700',

@@ -15,6 +15,51 @@ $RNFirebaseDisableSPM = true
 ENV['RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS'] = '1'
 use_frameworks! :linkage => :static
 
+HERMES_MINIMUM_IOS_VERSION = '15.1'
+
+def set_plist_string(plist_path, key, value)
+  return unless File.exist?(plist_path)
+
+  if system('/usr/libexec/PlistBuddy', '-c', "Print :#{key}", plist_path, out: File::NULL, err: File::NULL)
+    system('/usr/libexec/PlistBuddy', '-c', "Set :#{key} #{value}", plist_path)
+  else
+    system('/usr/libexec/PlistBuddy', '-c', "Add :#{key} string #{value}", plist_path)
+  end
+end
+
+def patch_hermes_minimum_os_version
+  pods_root = Pod::Config.instance.sandbox.root.to_s
+  hermes_plists = Dir.glob(File.join(pods_root, 'hermes-engine', '**', 'hermesvm.framework', 'Info.plist'))
+
+  hermes_plists.each do |plist_path|
+    set_plist_string(plist_path, 'MinimumOSVersion', HERMES_MINIMUM_IOS_VERSION)
+  end
+end
+
+def patch_hermes_embed_script
+  pods_root = Pod::Config.instance.sandbox.root.to_s
+  script_path = File.join(pods_root, 'Target Support Files', 'Pods-How2LoveMe', 'Pods-How2LoveMe-frameworks.sh')
+  return unless File.exist?(script_path)
+
+  script = File.read(script_path)
+  return if script.include?('ensure-hermes-minimum-os-version.sh')
+
+  needle = "  # Resign the code if required by the build settings to avoid unstable apps\n"
+  unless script.include?(needle)
+    Pod::UI.warn "Could not patch Hermes MinimumOSVersion into #{script_path}"
+    return
+  end
+
+  insertion = <<~'SH'
+    if [ "$basename" = "hermesvm" ] && [ -f "${destination}/${basename}.framework/Info.plist" ]; then
+      "${PODS_ROOT}/../scripts/ensure-hermes-minimum-os-version.sh" "${destination}/${basename}.framework/Info.plist"
+    fi
+
+  SH
+
+  File.write(script_path, script.sub(needle, insertion + needle))
+end
+
 target 'How2LoveMe' do
   config = use_native_modules!
 
@@ -31,6 +76,9 @@ target 'How2LoveMe' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
+
+    patch_hermes_minimum_os_version
+    patch_hermes_embed_script
 
     installer.pods_project.targets.each do |target|
       target.build_configurations.each do |build_configuration|

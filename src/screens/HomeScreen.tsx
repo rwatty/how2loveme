@@ -15,6 +15,7 @@ import {
   respondToLoveActionProposal,
   sendLoveActionReminder,
   transitionLoveActionStatus,
+  updateQuickTipsPreference,
   type LoveActionAppreciationReaction,
   type LoveActionConfirmationReaction,
 } from '../lib/relationshipSync';
@@ -44,6 +45,17 @@ const HOME_JUMP_SECTIONS: JumpSection[] = [
   { key: 'actions', label: 'Active Actions' },
   { key: 'archive', label: 'Love Note Archive' },
 ];
+
+type QuickTipCard = {
+  key: string;
+  eyebrow: string;
+  title: string;
+  body: string;
+  primaryLabel: string;
+  primaryRoute: keyof MainTabParamList;
+  secondaryLabel: string;
+  secondaryRoute: keyof MainTabParamList;
+};
 
 function getRelativeTime(createdAt: number) {
   const diffMinutes = Math.max(1, Math.round((Date.now() - createdAt) / 60000));
@@ -192,6 +204,7 @@ export default function HomeScreen() {
   const [transitioningActionId, setTransitioningActionId] = useState<string | null>(null);
   const [notificationBusy, setNotificationBusy] = useState(false);
   const [remindingActionId, setRemindingActionId] = useState<string | null>(null);
+  const [quickTipsBusy, setQuickTipsBusy] = useState(false);
   const [sectionOffsets, setSectionOffsets] = useState<Record<string, number>>({});
   const [confirmationReactionDrafts, setConfirmationReactionDrafts] = useState<Record<string, LoveActionConfirmationReaction>>({});
   const scrollViewRef = useRef<any>(null);
@@ -297,6 +310,76 @@ export default function HomeScreen() {
     () => loveActions.filter(action => action.status === 'due' && action.responsibleUserId === user?.uid).length,
     [loveActions, user?.uid],
   );
+  const quickTipsEnabled = profile?.quickTipsEnabled ?? true;
+  const quickTips = useMemo<QuickTipCard[]>(() => {
+    if (!profile?.coupleId) {
+      return [
+        {
+          key: 'connect',
+          eyebrow: 'Set up shared mode',
+          title: 'Invite your partner when you are ready',
+          body: 'Open Us to send the first invite so Love Notes, plans, and insights can sync across both accounts.',
+          primaryLabel: 'Open Us',
+          primaryRoute: 'Us',
+          secondaryLabel: 'Open Love',
+          secondaryRoute: 'Love',
+        },
+        {
+          key: 'note',
+          eyebrow: 'Most used',
+          title: 'Start with a Love Note or prompt',
+          body: 'Love is the fastest place to write something warm, playful, or reassuring without building a full plan first.',
+          primaryLabel: 'Write in Love',
+          primaryRoute: 'Love',
+          secondaryLabel: 'Open Insights',
+          secondaryRoute: 'Insights',
+        },
+        {
+          key: 'plan',
+          eyebrow: 'Keep momentum',
+          title: 'Drop a plan into Calendar',
+          body: 'Save dinner, a check-in, or a solo ritual so the app can help you keep track of what is coming next.',
+          primaryLabel: 'Open Calendar',
+          primaryRoute: 'Calendar',
+          secondaryLabel: 'Open Insights',
+          secondaryRoute: 'Insights',
+        },
+      ];
+    }
+
+    return [
+      {
+        key: 'note',
+        eyebrow: messages.length > 0 ? `Shared notes ${messages.length}` : 'Most used',
+        title: 'Keep the note thread warm',
+        body: 'Love is the quickest way to send a fresh note or use a prompt when you want a small moment of connection today.',
+        primaryLabel: 'Open Love',
+        primaryRoute: 'Love',
+        secondaryLabel: 'Open Calendar',
+        secondaryRoute: 'Calendar',
+      },
+      {
+        key: 'plan',
+        eyebrow: dueCount > 0 ? `Due now ${dueCount}` : 'Plan ahead',
+        title: 'Turn ideas into an actual plan',
+        body: 'Calendar is where dinner ideas, time together, and pinned places become something you can both act on.',
+        primaryLabel: 'Open Calendar',
+        primaryRoute: 'Calendar',
+        secondaryLabel: 'Open Love',
+        secondaryRoute: 'Love',
+      },
+      {
+        key: 'pulse',
+        eyebrow: reminderFeed.length > 0 ? `Live reminders ${reminderFeed.length}` : 'Stay aligned',
+        title: 'Check your pulse before it drifts',
+        body: 'Insights gives a fast read on connection, tension, and what the recent pattern says needs attention next.',
+        primaryLabel: 'Open Insights',
+        primaryRoute: 'Insights',
+        secondaryLabel: 'Open Us',
+        secondaryRoute: 'Us',
+      },
+    ];
+  }, [dueCount, messages.length, profile?.coupleId, reminderFeed.length]);
 
   const openLibrarySuggestion = (libraryItemId: string) => {
     queueLibraryItem(libraryItemId);
@@ -392,6 +475,24 @@ export default function HomeScreen() {
     }
   };
 
+  const handleQuickTipsToggle = async (enabled: boolean) => {
+    if (!user) {
+      setSnackbar('Sign in again to update your quick tips setting.');
+      return;
+    }
+
+    setQuickTipsBusy(true);
+
+    try {
+      await updateQuickTipsPreference(user, enabled);
+      setSnackbar(enabled ? 'Quick tips are back on for Home.' : 'Quick tips hidden. Turn them back on anytime in Us.');
+    } catch (error: any) {
+      setSnackbar(error.message ?? 'Unable to update quick tips right now.');
+    } finally {
+      setQuickTipsBusy(false);
+    }
+  };
+
   const handleLifecycleTransition = async (
     action: LoveAction,
     targetStatus: 'due' | 'performed' | 'confirmed' | 'appreciated',
@@ -449,7 +550,7 @@ export default function HomeScreen() {
   const summaryRow = (
     <View style={styles.summaryRow}>
       <View style={styles.summaryPill}>
-        <Text style={styles.summaryLabel}>Shared {messages.length}</Text>
+        <Text style={styles.summaryLabel}>{profile?.coupleId ? `Shared ${messages.length}` : `Notes ${messages.length}`}</Text>
       </View>
       <View style={styles.summaryPill}>
         <Text style={styles.summaryLabel}>Yours {ownMessagesCount}</Text>
@@ -464,13 +565,55 @@ export default function HomeScreen() {
         <Text style={styles.summaryLabel}>Reminders {reminderFeed.length}</Text>
       </View>
       <View style={styles.summaryPill}>
-        <Text style={styles.summaryLabel}>Awaiting you {pendingProposalInbox.length}</Text>
+        <Text style={styles.summaryLabel}>{profile?.coupleId ? `Awaiting you ${pendingProposalInbox.length}` : `Actions ${loveActions.length}`}</Text>
       </View>
       <View style={styles.summaryPill}>
         <Text style={styles.summaryLabel}>{profile?.coupleId ? 'Connected' : 'Solo'}</Text>
       </View>
     </View>
   );
+  const quickTipsSection = quickTipsEnabled ? (
+    <Surface style={styles.quickTipsShell} elevation={0}>
+      <View style={styles.quickTipsHeaderRow}>
+        <View style={styles.quickTipsCopy}>
+          <Text style={styles.quickTipsEyebrow}>Quick start</Text>
+          <Text variant="titleMedium" style={styles.quickTipsTitle}>
+            Start with the features people use most
+          </Text>
+          <Text style={styles.quickTipsBody}>
+            Jump into Love, Calendar, Insights, or Us without hunting around first.
+          </Text>
+        </View>
+        <Button compact mode="text" onPress={() => void handleQuickTipsToggle(false)} disabled={quickTipsBusy}>
+          Hide
+        </Button>
+      </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.quickTipsRail}
+      >
+        {quickTips.map(tip => (
+          <Surface key={tip.key} style={styles.quickTipCard} elevation={0}>
+            <Text style={styles.quickTipCardEyebrow}>{tip.eyebrow}</Text>
+            <Text variant="titleSmall" style={styles.quickTipCardTitle}>
+              {tip.title}
+            </Text>
+            <Text style={styles.quickTipCardBody}>{tip.body}</Text>
+            <View style={styles.actionsRow}>
+              <Button mode="contained-tonal" onPress={() => navigation.navigate(tip.primaryRoute)}>
+                {tip.primaryLabel}
+              </Button>
+              <Button mode="text" onPress={() => navigation.navigate(tip.secondaryRoute)}>
+                {tip.secondaryLabel}
+              </Button>
+            </View>
+          </Surface>
+        ))}
+      </ScrollView>
+      <Text style={styles.quickTipsHint}>Turn these back on anytime from the Us tab.</Text>
+    </Surface>
+  ) : null;
 
   if (!hydrated || relationshipSyncing) {
     return (
@@ -479,7 +622,7 @@ export default function HomeScreen() {
           <Text variant="headlineMedium" style={styles.header}>
             Home
           </Text>
-          <Text style={styles.subheader}>Warming your Love Notes and syncing your shared space.</Text>
+          <Text style={styles.subheader}>Warming your Love Notes and syncing your Love space.</Text>
           {summaryRow}
         </ScrollView>
       </SafeAreaView>
@@ -494,15 +637,16 @@ export default function HomeScreen() {
             Home
           </Text>
           <Text style={styles.subheader}>
-            Connect with your partner in Us to unlock shared Love Notes and live sync.
+            Your personal Love Notes and Love Actions live here now. Connect with your partner in Us when you want shared sync.
           </Text>
           {summaryRow}
+          {quickTipsSection}
           <Surface style={styles.emptyHero} elevation={0}>
             <Text variant="titleMedium" style={styles.emptyTitle}>
-              Your Love Notes are waiting
+              Your shared Home is waiting
             </Text>
             <Text style={styles.emptyBody}>
-              Send a partner invite by email from Us, then your Love Notes and Love Actions will sync across both accounts.
+              Keep building personal Love Notes and Love Actions now, then send a partner invite from Us when you want both accounts to sync together.
             </Text>
             <Button mode="contained" onPress={() => navigation.navigate('Us')} style={styles.primaryButton}>
               Connect in Us
@@ -532,6 +676,7 @@ export default function HomeScreen() {
             See what needs love today, answer shared proposals, and keep your Love Notes close by.
           </Text>
           {summaryRow}
+          {quickTipsSection}
           {!!relationshipError && <Text style={styles.errorText}>{relationshipError}</Text>}
           {!!screenError && <Text style={styles.errorText}>{screenError}</Text>}
           {!loveActionsHydrated || loveActionsSyncing ? (
@@ -1148,6 +1293,73 @@ const styles = StyleSheet.create({
   emptyBody: {
     color: '#5B4148',
     lineHeight: 20,
+  },
+  quickTipsShell: {
+    borderRadius: 24,
+    paddingVertical: 14,
+    backgroundColor: '#FFF7F2',
+    borderWidth: 1,
+    borderColor: '#F0DED4',
+    gap: 12,
+  },
+  quickTipsHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingHorizontal: 14,
+  },
+  quickTipsCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  quickTipsEyebrow: {
+    color: '#B25B63',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  quickTipsTitle: {
+    color: '#3F2831',
+    fontWeight: '700',
+  },
+  quickTipsBody: {
+    color: '#7C5964',
+    lineHeight: 20,
+  },
+  quickTipsRail: {
+    paddingHorizontal: 14,
+    gap: 10,
+  },
+  quickTipCard: {
+    width: 276,
+    borderRadius: 20,
+    padding: 14,
+    gap: 8,
+    backgroundColor: '#FFFDFC',
+    borderWidth: 1,
+    borderColor: '#F1DDD3',
+  },
+  quickTipCardEyebrow: {
+    color: '#8F6B74',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  quickTipCardTitle: {
+    color: '#3F2831',
+    fontWeight: '700',
+  },
+  quickTipCardBody: {
+    color: '#6B4A55',
+    lineHeight: 20,
+  },
+  quickTipsHint: {
+    paddingHorizontal: 14,
+    color: '#8F6B74',
+    fontSize: 12,
+    fontWeight: '600',
   },
   errorText: {
     color: '#B25B63',
